@@ -15,6 +15,7 @@ using Raven.Client.Linq;
 using System.Threading.Tasks;
 using Raven.Client;
 using Microsoft.Extensions.Logging;
+using Raven.Client.Document;
 
 namespace Quartz.Impl.RavenDB
 {
@@ -54,13 +55,12 @@ namespace Quartz.Impl.RavenDB
         public static string Url { get; set; }
         public static string DefaultDatabase { get; set; }
         public static string ApiKey { get; set; }
-        private readonly ILogger _logger;
         private readonly IDocumentStore _store;
 
-        public RavenJobStore(ILoggerFactory loggerFactory, IDocumentStore store)
+        public RavenJobStore()
         {
-            _logger = loggerFactory.CreateLogger(this.GetType().FullName);
-            _store = store;
+            _store = new DocumentStore() { Url = "http://localhost:9001/databases/test" };
+            _store.Initialize();
 
             InstanceName = "UnitTestScheduler";
             InstanceId = "instance_two";
@@ -177,13 +177,15 @@ namespace Quartz.Impl.RavenDB
         {
             try
             {
-                _logger.LogInformation("Trying to recover persisted scheduler data for" + InstanceName);
+                //_logger.LogInformation("Trying to recover persisted scheduler data for" + InstanceName);
 
                 // update inconsistent states
                 using (var session = _store.OpenAsyncSession())
                 {
-                    var queryResult = session.Query<Trigger>()
-                        .Where(t => (t.Scheduler == InstanceName) && (t.State == InternalTriggerState.Acquired || t.State == InternalTriggerState.Blocked));
+                    session.Advanced.WaitForIndexesAfterSaveChanges(indexes: new[] { new TriggerIndex().IndexName });
+
+                    var queryResult = await session.Query<Trigger, TriggerIndex>()
+                        .Where(t => (t.Scheduler == InstanceName) && (t.State == InternalTriggerState.Acquired || t.State == InternalTriggerState.Blocked)).ToListAsync();
                     foreach (var trigger in queryResult)
                     {
                         var triggerToUpdate = await session.LoadAsync<Trigger>(trigger.Key);
@@ -192,15 +194,15 @@ namespace Quartz.Impl.RavenDB
                     await session.SaveChangesAsync();
                 }
 
-                _logger.LogInformation("Freed triggers from 'acquired' / 'blocked' state.");
+                //_logger.LogInformation("Freed triggers from 'acquired' / 'blocked' state.");
                 
                 // recover jobs marked for recovery that were not fully executed
                 IList<IOperableTrigger> recoveringJobTriggers = new List<IOperableTrigger>();
 
                 using (var session = _store.OpenAsyncSession())
                 {
-                    var queryResultJobs = session.Query<Job>()
-                        .Where(j => (j.Scheduler == InstanceName) && j.RequestsRecovery);
+                    var queryResultJobs = await session.Query<Job, JobIndex>()
+                        .Where(j => (j.Scheduler == InstanceName) && j.RequestsRecovery).ToListAsync();
 
                     foreach (var job in queryResultJobs)
                     {
@@ -208,8 +210,8 @@ namespace Quartz.Impl.RavenDB
                     }
                 }
 
-                _logger.LogInformation("Recovering " + recoveringJobTriggers.Count +
-                         " jobs that were in-progress at the time of the last shut-down.");
+                //_logger.LogInformation("Recovering " + recoveringJobTriggers.Count +
+                //         " jobs that were in-progress at the time of the last shut-down.");
 
                 foreach (IOperableTrigger trigger in recoveringJobTriggers)
                 {
@@ -219,16 +221,16 @@ namespace Quartz.Impl.RavenDB
                         await StoreTrigger(trigger, true);
                     }
                 }
-                _logger.LogInformation("Recovery complete.");
+                //_logger.LogInformation("Recovery complete.");
 
                 // remove lingering 'complete' triggers...
-                _logger.LogInformation("Removing 'complete' triggers...");
-                IRavenQueryable<Trigger> triggersInStateComplete;
+                //_logger.LogInformation("Removing 'complete' triggers...");
+                IList<Trigger> triggersInStateComplete;
 
                 using (var session = _store.OpenAsyncSession())
                 {
-                    triggersInStateComplete = session.Query<Trigger>()
-                        .Where(t => (t.Scheduler == InstanceName) && (t.State == InternalTriggerState.Complete));
+                    triggersInStateComplete = await session.Query<Trigger, TriggerIndex>()
+                        .Where(t => (t.Scheduler == InstanceName) && (t.State == InternalTriggerState.Complete)).ToListAsync();
                 }
 
                 foreach (var trigger in triggersInStateComplete)
@@ -238,7 +240,6 @@ namespace Quartz.Impl.RavenDB
 
                 using (var session = _store.OpenAsyncSession())
                 {
-
                     var schedToUpdate = await session.LoadAsync<Scheduler>(InstanceName);
                     schedToUpdate.State = "Started";
                     await session.SaveChangesAsync();
@@ -325,6 +326,7 @@ namespace Quartz.Impl.RavenDB
 
             using (var session = _store.OpenAsyncSession())
             {
+                session.Advanced.WaitForIndexesAfterSaveChanges(indexes: new[] { new JobIndex().IndexName });
                 // Store() overwrites if job id already exists
                 await session.StoreAsync(job, job.Key);
                 await session.SaveChangesAsync();
@@ -385,6 +387,7 @@ namespace Quartz.Impl.RavenDB
         {
             using (var session = _store.OpenAsyncSession())
             {
+                session.Advanced.WaitForIndexesAfterSaveChanges(indexes: new[] { new JobIndex().IndexName });
                 if (!await CheckExists(jobKey))
                 {
                     return false;
@@ -471,6 +474,7 @@ namespace Quartz.Impl.RavenDB
 
             using (var session = _store.OpenAsyncSession())
             {
+                session.Advanced.WaitForIndexesAfterSaveChanges(indexes: new[] { new TriggerIndex().IndexName });
                 // Overwrite if exists
                 await session.StoreAsync(trigger, trigger.Key);
                 await session.SaveChangesAsync();
@@ -500,6 +504,7 @@ namespace Quartz.Impl.RavenDB
             }
             using (var session = _store.OpenAsyncSession())
             {
+                session.Advanced.WaitForIndexesAfterSaveChanges(indexes: new[] { new TriggerIndex().IndexName, new JobIndex().IndexName });
                 var trigger = await session.LoadAsync<Trigger>(triggerKey.Name + "/" + triggerKey.Group);
                 var job = await RetrieveJob(new JobKey(trigger.JobName, trigger.Group));
 
@@ -606,7 +611,7 @@ namespace Quartz.Impl.RavenDB
                 }
                 catch (ArgumentNullException argumentNullException)
                 {
-                    _logger.LogError("Calendars collection is null.", argumentNullException);
+                    //_logger.LogError("Calendars collection is null.", argumentNullException);
                     answer = false;
                 }
             }
@@ -694,25 +699,23 @@ namespace Quartz.Impl.RavenDB
                 }
 
                 var triggersKeysToUpdate = await session
-                    .Query<Trigger>()
+                    .Query<Trigger, TriggerIndex>()
                     .Where(t => t.CalendarName == name)
                     .Select(t => t.Key)
                     .ToListAsync();
 
-                if (triggersKeysToUpdate.Count == 0)
+                if (triggersKeysToUpdate.Any())
                 {
-                    await session.SaveChangesAsync();
-                    return;
+                    session.Advanced.WaitForIndexesAfterSaveChanges(indexes: new[] { new TriggerIndex().IndexName });
+                    foreach (var triggerKey in triggersKeysToUpdate)
+                    {
+                        var triggerToUpdate = await session.LoadAsync<Trigger>(triggerKey);
+                        var trigger = triggerToUpdate.Deserialize();
+                        trigger.UpdateWithNewCalendar(calendarCopy, misfireThreshold);
+                        triggerToUpdate.UpdateFireTimes(trigger);
+                    }
                 }
 
-                foreach (var triggerKey in triggersKeysToUpdate)
-                {
-                    var triggerToUpdate = await session.LoadAsync<Trigger>(triggerKey);
-                    var trigger = triggerToUpdate.Deserialize();
-                    trigger.UpdateWithNewCalendar(calendarCopy, misfireThreshold);
-                    triggerToUpdate.UpdateFireTimes(trigger);
-
-                }
                 await session.SaveChangesAsync();
             }
         }
@@ -798,7 +801,7 @@ namespace Quartz.Impl.RavenDB
         {
             using (var session = _store.OpenAsyncSession())
             {
-                return await session.Query<Job>().CountAsync();
+                return await session.Query<Job, JobIndex>().CountAsync();
             }
         }
 
@@ -812,7 +815,7 @@ namespace Quartz.Impl.RavenDB
         {
             using (var session = _store.OpenAsyncSession())
             {
-                return await session.Query<Trigger>().CountAsync();
+                return await session.Query<Trigger, TriggerIndex>().CountAsync();
             }
         }
 
@@ -847,7 +850,7 @@ namespace Quartz.Impl.RavenDB
 
             using (var session = _store.OpenAsyncSession())
             {
-                var allJobs = await session.Query<Job>().ToListAsync();
+                var allJobs = await session.Advanced.LoadStartingWithAsync<Job>("job/", null, 0, 1024);
 
                 foreach (var job in allJobs)
                 {
@@ -878,7 +881,7 @@ namespace Quartz.Impl.RavenDB
 
             using (var session = _store.OpenAsyncSession())
             {
-                var allTriggers = await session.Query<Trigger>().ToListAsync();
+                var allTriggers = await session.Query<Trigger, TriggerIndex>().ToListAsync();
 
                 foreach (var trigger in allTriggers)
                 {
@@ -904,10 +907,7 @@ namespace Quartz.Impl.RavenDB
         {
             using (var session = _store.OpenAsyncSession())
             {
-                return (await session.Query<Job>()
-                    .Select(j => j.Group)
-                    .Distinct()
-                    .ToListAsync()).ToList();
+                return (await session.Advanced.LoadStartingWithAsync<Job>("job/", null, 0, 1024)).Select(t => t.Group).Distinct().ToList();
             }
         }
 
@@ -926,7 +926,7 @@ namespace Quartz.Impl.RavenDB
             {
                 try
                 {
-                    var result = await session.Query<Trigger>()
+                    var result = await session.Query<Trigger, TriggerIndex>()
                         .Select(t => t.Group)
                         .Distinct()
                         .ToListAsync();
@@ -967,7 +967,7 @@ namespace Quartz.Impl.RavenDB
                 try
                 {
                     var result = (await session
-                        .Query<Trigger>()
+                        .Query<Trigger, TriggerIndex>()
                         .Where(t => Equals(t.JobName, jobKey.Name) && Equals(t.Group, jobKey.Group))
                         .ToListAsync())
                         .Select(trigger => trigger.Deserialize()).ToList();
@@ -1028,6 +1028,7 @@ namespace Quartz.Impl.RavenDB
 
             using (var session = _store.OpenAsyncSession())
             {
+                session.Advanced.WaitForIndexesAfterSaveChanges(indexes: new[] { new TriggerIndex().IndexName });
                 var trig = await session.LoadAsync<Trigger>(triggerKey.Name + "/" + triggerKey.Group);
 
                 // if the trigger doesn't exist or is "complete" pausing it does not make sense...
@@ -1136,15 +1137,13 @@ namespace Quartz.Impl.RavenDB
             }
             using (var session = _store.OpenAsyncSession())
             {
+                session.Advanced.WaitForIndexesAfterSaveChanges(indexes: new[] { new TriggerIndex().IndexName });
                 var trigger = await session.LoadAsync<Trigger>(triggerKey.Name + "/" + triggerKey.Group);
 
                 // if the trigger is not paused resuming it does not make sense...
-                if (trigger.State != InternalTriggerState.Paused &&
-                    trigger.State != InternalTriggerState.PausedAndBlocked)
-                {
+                if (trigger.State != InternalTriggerState.Paused && trigger.State != InternalTriggerState.PausedAndBlocked)
                     return;
-                }
-
+                
                 trigger.State = (await GetBlockedJobs()).Contains(trigger.JobKey) ? InternalTriggerState.Blocked : InternalTriggerState.Waiting;
 
                 await ApplyMisfire(trigger);
@@ -1187,10 +1186,10 @@ namespace Quartz.Impl.RavenDB
             {
                 await Task.FromResult(0);
                 return new HashSet<string>(
-                    session.Query<Trigger>()
+                    (await session.Query<Trigger, TriggerIndex>()
                         .Where(t => t.State == InternalTriggerState.Paused || t.State == InternalTriggerState.PausedAndBlocked)
                         .Distinct()
-                        .Select(t => t.Group)
+                        .Select(t => t.Group).ToListAsync())
                         .ToHashSet()
                 );
             }
@@ -1419,7 +1418,8 @@ namespace Quartz.Impl.RavenDB
 
             using (var session = _store.OpenAsyncSession())
             {
-                var triggersQuery = await session.Query<Trigger>()
+                session.Advanced.WaitForIndexesAfterSaveChanges(indexes: new[] { new TriggerIndex().IndexName });
+                var triggersQuery = await session.Query<Trigger, TriggerIndex>()
                     .Where(t => (t.State == InternalTriggerState.Waiting) && (t.NextFireTimeUtc <= (noLaterThan + timeWindow).UtcDateTime))
                     .OrderBy(t => t.NextFireTimeTicks)
                     .ThenByDescending(t => t.Priority)
@@ -1507,6 +1507,7 @@ namespace Quartz.Impl.RavenDB
         {
             using (var session = _store.OpenAsyncSession())
             {
+                session.Advanced.WaitForIndexesAfterSaveChanges(indexes: new[] { new TriggerIndex().IndexName });
                 var trigger = await session.LoadAsync<Trigger>(trig.Key.Name + "/" + trig.Key.Group);
                 if ((trigger == null) || (trigger.State != InternalTriggerState.Acquired))
                 {
@@ -1534,6 +1535,7 @@ namespace Quartz.Impl.RavenDB
             List<TriggerFiredResult> results = new List<TriggerFiredResult>();
             using (var session = _store.OpenAsyncSession())
             {
+                session.Advanced.WaitForIndexesAfterSaveChanges(indexes: new[] { new TriggerIndex().IndexName });
                 foreach (IOperableTrigger tr in triggers)
                 {
                     // was the trigger deleted since being acquired?
@@ -1573,7 +1575,7 @@ namespace Quartz.Impl.RavenDB
 
                     if (job.ConcurrentExecutionDisallowed)
                     {
-                        var trigs = session.Query<Trigger>()
+                        var trigs = session.Query<Trigger, TriggerIndex>()
                             .Where(t => Equals(t.Group, job.Key.Group) && Equals(t.JobName, job.Key.Name));
 
                         foreach (var t in trigs)
@@ -1611,6 +1613,7 @@ namespace Quartz.Impl.RavenDB
         {
             using (var session = _store.OpenAsyncSession())
             {
+                session.Advanced.WaitForIndexesAfterSaveChanges(indexes: new[] { new TriggerIndex().IndexName, new JobIndex().IndexName });
                 var trigger = await session.LoadAsync<Trigger>(trig.Key.Name + "/" + trig.Key.Group);
                 var sched = await session.LoadAsync<Scheduler>(InstanceName);
 
@@ -1628,7 +1631,7 @@ namespace Quartz.Impl.RavenDB
                     {
                         sched.BlockedJobs.Remove(job.Key);
 
-                        var trigs = await session.Query<Trigger>()
+                        var trigs = await session.Query<Trigger, TriggerIndex>()
                             .Where(t => Equals(t.Group, job.Group) && Equals(t.JobName, job.Name))
                             .ToListAsync();
 
@@ -1715,7 +1718,8 @@ namespace Quartz.Impl.RavenDB
         {
             using (var session = _store.OpenAsyncSession())
             {
-                var trigs = session.Query<Trigger>()
+                session.Advanced.WaitForIndexesAfterSaveChanges(indexes: new[] { new TriggerIndex().IndexName });
+                var trigs = session.Query<Trigger, TriggerIndex>()
                     .Where(t => Equals(t.Group, jobKey.Group) && Equals(t.JobName, jobKey.Name));
 
                 foreach (var trig in trigs)

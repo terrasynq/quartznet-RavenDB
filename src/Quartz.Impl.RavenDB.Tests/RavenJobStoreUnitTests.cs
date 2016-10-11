@@ -50,11 +50,8 @@ namespace Quartz.Impl.RavenDB.Facts
 
         public RavenJobStoreUnitFacts()
         {
-            var store = new DocumentStore() { Url = "http://localhost:9001" };
-
-            ILoggerFactory loggerFactory = new LoggerFactory().AddConsole();
-
-            fJobStore = new RavenJobStore(loggerFactory, store);
+            
+            fJobStore = new RavenJobStore();
             fJobStore.ClearAllSchedulingData();
             Thread.Sleep(1000);
         }
@@ -618,6 +615,7 @@ namespace Quartz.Impl.RavenDB.Facts
                 ["quartz.scheduler.instanceId"] = "AUTO",
                 ["quartz.threadPool.threadCount"] = threadCount.ToString(CultureInfo.InvariantCulture),
                 ["quartz.threadPool.type"] = "Quartz.Simpl.SimpleThreadPool, Quartz",
+                ["quartz.serializer.type"] = "json",
                 // Setting RavenDB as the persisted JobStore
                 ["quartz.jobStore.type"] = "Quartz.Impl.RavenDB.RavenJobStore, Quartz.Impl.RavenDB",
             };
@@ -660,7 +658,6 @@ namespace Quartz.Impl.RavenDB.Facts
                     jobExecTimestamps.Add(DateTime.UtcNow);
 
                     barrier.SignalAndWait(FactTimeout);
-                    await Task.FromResult(0);
                 }
                 catch (Exception e)
                 {
@@ -675,7 +672,7 @@ namespace Quartz.Impl.RavenDB.Facts
         {
             public async Task Execute(IJobExecutionContext context)
             {
-                await Task.FromResult(0);
+
             }
         }
         [Fact]
@@ -707,7 +704,7 @@ namespace Quartz.Impl.RavenDB.Facts
 
             DateTime fTime = jobExecTimestamps[0];
 
-            Assert.True(fTime - sTime < TimeSpan.FromMilliseconds(7000));
+            Assert.True(fTime - sTime < TimeSpan.FromSeconds(60));
         }
 
         [Fact]
@@ -739,7 +736,7 @@ namespace Quartz.Impl.RavenDB.Facts
 
             DateTime fTime = jobExecTimestamps[0];
 
-            Assert.True(fTime - sTime < TimeSpan.FromMilliseconds(7000)); // This is dangerously subjective!  but what else to do?
+            Assert.True(fTime - sTime < TimeSpan.FromSeconds(60)); // This is dangerously subjective!  but what else to do?
         }
 
         [Fact]
@@ -768,7 +765,7 @@ namespace Quartz.Impl.RavenDB.Facts
 
             DateTime fTime = jobExecTimestamps[0];
 
-            Assert.True((fTime - sTime < TimeSpan.FromMilliseconds(7000))); // This is dangerously subjective!  but what else to do?
+            Assert.True((fTime - sTime < TimeSpan.FromSeconds(60))); // This is dangerously subjective!  but what else to do?
         }
 
         [Fact]

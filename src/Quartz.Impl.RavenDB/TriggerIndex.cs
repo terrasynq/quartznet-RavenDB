@@ -22,7 +22,9 @@ namespace Quartz.Impl.RavenDB
                             NextFireTimeTicks = doc.NextFireTimeTicks,
                             NextFireTimeUtc = doc.NextFireTimeUtc,
                             Priority = doc.Priority,
-                            State = doc.State
+                            State = doc.State,
+                            Scheduler = doc.Scheduler,
+                            CalendarName = doc.CalendarName
                         }"
             };
         }

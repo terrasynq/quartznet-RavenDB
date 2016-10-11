@@ -24,7 +24,7 @@ namespace Quartz.Impl.RavenDB.Tests
             scheduler.ListenerManager.AddJobListener(listener);
             await scheduler.Start();
             await scheduler.ScheduleJob(job, trigger);
-            while (!await scheduler.CheckExists(job.Key)) ;
+            while (!await scheduler.CheckExists(job.Key));
             await scheduler.Shutdown(true);
         }
 
@@ -46,6 +46,7 @@ namespace Quartz.Impl.RavenDB.Tests
                 // Normal scheduler properties
                 ["quartz.scheduler.instanceName"] = "TestScheduler",
                 ["quartz.scheduler.instanceId"] = "instance_one",
+                ["quartz.serializer.type"] = "json",
                 // RavenDB JobStore property
                 ["quartz.jobStore.type"] = "Quartz.Impl.RavenDB.RavenJobStore, Quartz.Impl.RavenDB"
             };
@@ -61,6 +62,7 @@ namespace Quartz.Impl.RavenDB.Tests
         {
             public async Task Execute(IJobExecutionContext context)
             {
+                System.Threading.Thread.Sleep(500);
                 await Task.FromResult(0);
             }
         }

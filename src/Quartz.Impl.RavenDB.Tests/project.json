@@ -1,5 +1,6 @@
 ﻿{
   "version": "1.0.0-*",
+  "testRunner": "xunit",
 
   "dependencies": {
     "Microsoft.Extensions.Logging": "1.0.0",
@@ -8,12 +9,25 @@
     "Quartz": "3.0.0-alpha2",
     "Quartz.Impl.RavenDB": "1.0.0-*",
     "RavenDB.Client": "3.5.0-rc-35169",
-    "xunit": "2.2.0-beta3-build3402"
+    "dotnet-test-xunit": "2.2.0-preview2-build1029",
+    "xunit": "2.2.0-beta3-build3402",
+    "Quartz.Serialization.Json": "3.0.0-alpha2"
   },
 
   "frameworks": {
-    "netstandard1.6": {
-      "imports": "dnxcore50"
+    "netcoreapp1.0": {
+      "imports": [
+        "netcoreapp1.0",
+        "netstandard1.6",
+        "dnxcore50",
+        "portable-net452+win81"
+      ],
+      "dependencies": {
+        "Microsoft.NETCore.App": {
+          "type": "platform",
+          "version": "1.0.0"
+        }
+      }
     }
   }
 }

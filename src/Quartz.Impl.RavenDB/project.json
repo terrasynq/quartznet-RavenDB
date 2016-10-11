@@ -5,11 +5,15 @@
     "Microsoft.Extensions.Logging": "1.0.0",
     "NETStandard.Library": "1.6.0",
     "Quartz": "3.0.0-alpha2",
+    "Quartz.Serialization.Json": "3.0.0-alpha2",
     "RavenDB.Client": "3.5.0-rc-35169"
   },
 
   "frameworks": {
     "net451": {
+      "dependencies": {
+        "xunit.runner.visualstudio": "2.2.0-beta3-build1187"
+      }
     },
     "netstandard1.6": {
       "imports": "dnxcore50",
