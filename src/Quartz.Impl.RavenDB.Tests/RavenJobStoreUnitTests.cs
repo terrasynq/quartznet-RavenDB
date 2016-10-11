@@ -21,7 +21,6 @@
 
 using System;
 using System.Collections.Generic;
-using NUnit.Framework;
 using Quartz.Impl.Calendar;
 using Quartz.Impl.Matchers;
 using Quartz.Impl.Triggers;
@@ -31,47 +30,50 @@ using Quartz.Spi;
 using System.Collections.Specialized;
 using System.Globalization;
 using System.Threading;
+using Xunit;
+using System.Threading.Tasks;
+using Quartz.Impl.RavenDB;
+using Raven.Client.Document;
+using Microsoft.Extensions.Logging;
 
-namespace Quartz.Impl.RavenDB.Tests
+namespace Quartz.Impl.RavenDB.Facts
 {
     /// <summary>
-    /// Unit tests for RavenJobStore, based on the RAMJobStore tests with minor changes
+    /// Unit Facts for RavenJobStore, based on the RAMJobStore Facts with minor changes
     /// (originally submitted by Johannes Zillmann)
     /// </summary>
-    [TestFixture]
-    public class RavenJobStoreUnitTests
+    public class RavenJobStoreUnitFacts
     {
         private IJobStore fJobStore;
         private JobDetailImpl fJobDetail;
         private SampleSignaler fSignaler;
 
-        [SetUp]
-        public void SetUp()
+        public RavenJobStoreUnitFacts()
         {
-            fJobStore = new RavenJobStore();
+            var store = new DocumentStore() { Url = "http://localhost:9001" };
+
+            ILoggerFactory loggerFactory = new LoggerFactory().AddConsole();
+
+            fJobStore = new RavenJobStore(loggerFactory, store);
             fJobStore.ClearAllSchedulingData();
             Thread.Sleep(1000);
         }
 
-        private void InitJobStore()
+        private async Task InitJobStore()
         {
-
-            fJobStore = new RavenJobStore();
-
-            fJobStore.ClearAllSchedulingData();
             fSignaler = new SampleSignaler();
-            fJobStore.Initialize(null, fSignaler);
-            fJobStore.SchedulerStarted();
+            await fJobStore.Initialize(null, fSignaler);
+            await fJobStore.SchedulerStarted();
 
             fJobDetail = new JobDetailImpl("job1", "jobGroup1", typeof(NoOpJob));
             fJobDetail.Durable = true;
-            fJobStore.StoreJob(fJobDetail, true);
+            await fJobStore.StoreJob(fJobDetail, true);
         }
 
-        [Test]
-        public void TestAcquireNextTrigger()
+        [Fact]
+        public async Task FactAcquireNextTrigger()
         {
-            InitJobStore();
+            await InitJobStore();
 
             DateTimeOffset d = DateBuilder.EvenMinuteDateAfterNow();
             IOperableTrigger trigger1 = new SimpleTriggerImpl("trigger1", "triggerGroup1", fJobDetail.Name, fJobDetail.Group, d.AddSeconds(200), d.AddSeconds(200), 2, TimeSpan.FromSeconds(2));
@@ -81,28 +83,28 @@ namespace Quartz.Impl.RavenDB.Tests
             trigger1.ComputeFirstFireTimeUtc(null);
             trigger2.ComputeFirstFireTimeUtc(null);
             trigger3.ComputeFirstFireTimeUtc(null);
-            fJobStore.StoreTrigger(trigger1, false);
-            fJobStore.StoreTrigger(trigger2, false);
-            fJobStore.StoreTrigger(trigger3, false);
+            await fJobStore.StoreTrigger(trigger1, false);
+            await fJobStore.StoreTrigger(trigger2, false);
+            await fJobStore.StoreTrigger(trigger3, false);
 
             DateTimeOffset firstFireTime = trigger1.GetNextFireTimeUtc().Value;
 
-            Assert.AreEqual(0, fJobStore.AcquireNextTriggers(d.AddMilliseconds(10), 1, TimeSpan.Zero).Count);
-            Assert.AreEqual(trigger2, fJobStore.AcquireNextTriggers(firstFireTime.AddSeconds(10), 1, TimeSpan.Zero)[0]);
-            Assert.AreEqual(trigger3, fJobStore.AcquireNextTriggers(firstFireTime.AddSeconds(10), 1, TimeSpan.Zero)[0]);
-            Assert.AreEqual(trigger1, fJobStore.AcquireNextTriggers(firstFireTime.AddSeconds(10), 1, TimeSpan.Zero)[0]);
-            Assert.AreEqual(0, fJobStore.AcquireNextTriggers(firstFireTime.AddSeconds(10), 1, TimeSpan.Zero).Count);
+            Assert.Equal(0, (await fJobStore.AcquireNextTriggers(d.AddMilliseconds(10), 1, TimeSpan.Zero)).Count);
+            Assert.Equal(trigger2, (await fJobStore.AcquireNextTriggers(firstFireTime.AddSeconds(10), 1, TimeSpan.Zero))[0]);
+            Assert.Equal(trigger3, (await fJobStore.AcquireNextTriggers(firstFireTime.AddSeconds(10), 1, TimeSpan.Zero))[0]);
+            Assert.Equal(trigger1, (await fJobStore.AcquireNextTriggers(firstFireTime.AddSeconds(10), 1, TimeSpan.Zero))[0]);
+            Assert.Equal(0, (await fJobStore.AcquireNextTriggers(firstFireTime.AddSeconds(10), 1, TimeSpan.Zero)).Count);
 
 
             // release trigger3
-            fJobStore.ReleaseAcquiredTrigger(trigger3);
-            Assert.AreEqual(trigger3, fJobStore.AcquireNextTriggers(firstFireTime.AddSeconds(10), 1, TimeSpan.FromMilliseconds(1))[0]);
+            await fJobStore.ReleaseAcquiredTrigger(trigger3);
+            Assert.Equal(trigger3, (await fJobStore.AcquireNextTriggers(firstFireTime.AddSeconds(10), 1, TimeSpan.FromMilliseconds(1)))[0]);
         }
 
-        [Test]
-        public void TestAcquireNextTriggerBatch()
+        [Fact]
+        public async Task FactAcquireNextTriggerBatch()
         {
-            InitJobStore();
+            await InitJobStore();
 
             DateTimeOffset d = DateBuilder.EvenMinuteDateAfterNow();
             
@@ -119,123 +121,123 @@ namespace Quartz.Impl.RavenDB.Tests
             trigger3.ComputeFirstFireTimeUtc(null);
             trigger4.ComputeFirstFireTimeUtc(null);
             trigger10.ComputeFirstFireTimeUtc(null);
-            fJobStore.StoreTrigger(early, false);
-            fJobStore.StoreTrigger(trigger1, false);
-            fJobStore.StoreTrigger(trigger2, false);
-            fJobStore.StoreTrigger(trigger3, false);
-            fJobStore.StoreTrigger(trigger4, false);
-            fJobStore.StoreTrigger(trigger10, false);
+            await fJobStore.StoreTrigger(early, false);
+            await fJobStore.StoreTrigger(trigger1, false);
+            await fJobStore.StoreTrigger(trigger2, false);
+            await fJobStore.StoreTrigger(trigger3, false);
+            await fJobStore.StoreTrigger(trigger4, false);
+            await fJobStore.StoreTrigger(trigger10, false);
 
             DateTimeOffset firstFireTime = trigger1.GetNextFireTimeUtc().Value;
 
-            IList<IOperableTrigger> acquiredTriggers = fJobStore.AcquireNextTriggers(firstFireTime.AddSeconds(10), 4, TimeSpan.FromSeconds(1));
-            Assert.AreEqual(4, acquiredTriggers.Count);
-            Assert.AreEqual(early.Key, acquiredTriggers[0].Key);
-            Assert.AreEqual(trigger1.Key, acquiredTriggers[1].Key);
-            Assert.AreEqual(trigger2.Key, acquiredTriggers[2].Key);
-            Assert.AreEqual(trigger3.Key, acquiredTriggers[3].Key);
-            fJobStore.ReleaseAcquiredTrigger(early);
-      		fJobStore.ReleaseAcquiredTrigger(trigger1);
-        	fJobStore.ReleaseAcquiredTrigger(trigger2);
-        	fJobStore.ReleaseAcquiredTrigger(trigger3);
+            var acquiredTriggers = await fJobStore.AcquireNextTriggers(firstFireTime.AddSeconds(10), 4, TimeSpan.FromSeconds(1));
+            Assert.Equal(4, acquiredTriggers.Count);
+            Assert.Equal(early.Key, acquiredTriggers[0].Key);
+            Assert.Equal(trigger1.Key, acquiredTriggers[1].Key);
+            Assert.Equal(trigger2.Key, acquiredTriggers[2].Key);
+            Assert.Equal(trigger3.Key, acquiredTriggers[3].Key);
+            await fJobStore.ReleaseAcquiredTrigger(early);
+      		await fJobStore.ReleaseAcquiredTrigger(trigger1);
+        	await fJobStore.ReleaseAcquiredTrigger(trigger2);
+            await fJobStore.ReleaseAcquiredTrigger(trigger3);
 			
-            acquiredTriggers = this.fJobStore.AcquireNextTriggers(firstFireTime.AddSeconds(10), 5, TimeSpan.FromMilliseconds(1000));
-            Assert.AreEqual(5, acquiredTriggers.Count);
-            Assert.AreEqual(early.Key, acquiredTriggers[0].Key);
-            Assert.AreEqual(trigger1.Key, acquiredTriggers[1].Key);
-            Assert.AreEqual(trigger2.Key, acquiredTriggers[2].Key);
-            Assert.AreEqual(trigger3.Key, acquiredTriggers[3].Key);
-            Assert.AreEqual(trigger4.Key, acquiredTriggers[4].Key);
-            fJobStore.ReleaseAcquiredTrigger(early);
-            fJobStore.ReleaseAcquiredTrigger(trigger1);
-            fJobStore.ReleaseAcquiredTrigger(trigger2);
-            fJobStore.ReleaseAcquiredTrigger(trigger3);
-            fJobStore.ReleaseAcquiredTrigger(trigger4);
+            acquiredTriggers = await fJobStore.AcquireNextTriggers(firstFireTime.AddSeconds(10), 5, TimeSpan.FromMilliseconds(1000));
+            Assert.Equal(5, acquiredTriggers.Count);
+            Assert.Equal(early.Key, acquiredTriggers[0].Key);
+            Assert.Equal(trigger1.Key, acquiredTriggers[1].Key);
+            Assert.Equal(trigger2.Key, acquiredTriggers[2].Key);
+            Assert.Equal(trigger3.Key, acquiredTriggers[3].Key);
+            Assert.Equal(trigger4.Key, acquiredTriggers[4].Key);
+            await fJobStore.ReleaseAcquiredTrigger(early);
+            await fJobStore.ReleaseAcquiredTrigger(trigger1);
+            await fJobStore.ReleaseAcquiredTrigger(trigger2);
+            await fJobStore.ReleaseAcquiredTrigger(trigger3);
+            await fJobStore.ReleaseAcquiredTrigger(trigger4);
 
-            acquiredTriggers = fJobStore.AcquireNextTriggers(firstFireTime.AddSeconds(10), 6, TimeSpan.FromSeconds(1));
-            Assert.AreEqual(5, acquiredTriggers.Count);
-            Assert.AreEqual(early.Key, acquiredTriggers[0].Key);
-            Assert.AreEqual(trigger1.Key, acquiredTriggers[1].Key);
-            Assert.AreEqual(trigger2.Key, acquiredTriggers[2].Key);
-            Assert.AreEqual(trigger3.Key, acquiredTriggers[3].Key);
-            Assert.AreEqual(trigger4.Key, acquiredTriggers[4].Key);
-            fJobStore.ReleaseAcquiredTrigger(early);
-            fJobStore.ReleaseAcquiredTrigger(trigger1);
-            fJobStore.ReleaseAcquiredTrigger(trigger2);
-            fJobStore.ReleaseAcquiredTrigger(trigger3);
-            fJobStore.ReleaseAcquiredTrigger(trigger4);
+            acquiredTriggers = await fJobStore.AcquireNextTriggers(firstFireTime.AddSeconds(10), 6, TimeSpan.FromSeconds(1));
+            Assert.Equal(5, acquiredTriggers.Count);
+            Assert.Equal(early.Key, acquiredTriggers[0].Key);
+            Assert.Equal(trigger1.Key, acquiredTriggers[1].Key);
+            Assert.Equal(trigger2.Key, acquiredTriggers[2].Key);
+            Assert.Equal(trigger3.Key, acquiredTriggers[3].Key);
+            Assert.Equal(trigger4.Key, acquiredTriggers[4].Key);
+            await fJobStore.ReleaseAcquiredTrigger(early);
+            await fJobStore.ReleaseAcquiredTrigger(trigger1);
+            await fJobStore.ReleaseAcquiredTrigger(trigger2);
+            await fJobStore.ReleaseAcquiredTrigger(trigger3);
+            await fJobStore.ReleaseAcquiredTrigger(trigger4);
 
-            acquiredTriggers = fJobStore.AcquireNextTriggers(firstFireTime.AddMilliseconds(1), 5, TimeSpan.Zero);
-            Assert.AreEqual(2, acquiredTriggers.Count);
-            fJobStore.ReleaseAcquiredTrigger(early);
-            fJobStore.ReleaseAcquiredTrigger(trigger1);
+            acquiredTriggers = await fJobStore.AcquireNextTriggers(firstFireTime.AddMilliseconds(1), 5, TimeSpan.Zero);
+            Assert.Equal(2, acquiredTriggers.Count);
+            await fJobStore.ReleaseAcquiredTrigger(early);
+            await fJobStore.ReleaseAcquiredTrigger(trigger1);
 
-            acquiredTriggers = fJobStore.AcquireNextTriggers(firstFireTime.AddMilliseconds(250), 5, TimeSpan.FromMilliseconds(199));
-            Assert.AreEqual(5, acquiredTriggers.Count);
-            fJobStore.ReleaseAcquiredTrigger(early); 
-            fJobStore.ReleaseAcquiredTrigger(trigger1);
-            fJobStore.ReleaseAcquiredTrigger(trigger2);
-            fJobStore.ReleaseAcquiredTrigger(trigger3);
-            fJobStore.ReleaseAcquiredTrigger(trigger4);
+            acquiredTriggers = await fJobStore.AcquireNextTriggers(firstFireTime.AddMilliseconds(250), 5, TimeSpan.FromMilliseconds(199));
+            Assert.Equal(5, acquiredTriggers.Count);
+            await fJobStore.ReleaseAcquiredTrigger(early); 
+            await fJobStore.ReleaseAcquiredTrigger(trigger1);
+            await fJobStore.ReleaseAcquiredTrigger(trigger2);
+            await fJobStore.ReleaseAcquiredTrigger(trigger3);
+            await fJobStore.ReleaseAcquiredTrigger(trigger4);
 
-            acquiredTriggers = fJobStore.AcquireNextTriggers(firstFireTime.AddMilliseconds(150), 5, TimeSpan.FromMilliseconds(50L));
-            Assert.AreEqual(4, acquiredTriggers.Count);
-            fJobStore.ReleaseAcquiredTrigger(early);
-            fJobStore.ReleaseAcquiredTrigger(trigger1);
-            fJobStore.ReleaseAcquiredTrigger(trigger2);
-            fJobStore.ReleaseAcquiredTrigger(trigger3);
+            acquiredTriggers = await fJobStore.AcquireNextTriggers(firstFireTime.AddMilliseconds(150), 5, TimeSpan.FromMilliseconds(50L));
+            Assert.Equal(4, acquiredTriggers.Count);
+            await fJobStore.ReleaseAcquiredTrigger(early);
+            await fJobStore.ReleaseAcquiredTrigger(trigger1);
+            await fJobStore.ReleaseAcquiredTrigger(trigger2);
+            await fJobStore.ReleaseAcquiredTrigger(trigger3);
         }
 
-        [Test]
-        public void TestTriggerStates()
+        [Fact]
+        public async Task FactTriggerStates()
         {
-            InitJobStore();
+            await InitJobStore();
 
             IOperableTrigger trigger = new SimpleTriggerImpl("trigger1", "triggerGroup1", fJobDetail.Name, fJobDetail.Group, DateTimeOffset.Now.AddSeconds(100), DateTimeOffset.Now.AddSeconds(200), 2, TimeSpan.FromSeconds(2));
             trigger.ComputeFirstFireTimeUtc(null);
-            Assert.AreEqual(TriggerState.None, fJobStore.GetTriggerState(trigger.Key));
-            fJobStore.StoreTrigger(trigger, false);
-            Assert.AreEqual(TriggerState.Normal, fJobStore.GetTriggerState(trigger.Key));
+            Assert.Equal(TriggerState.None, await fJobStore.GetTriggerState(trigger.Key));
+            await fJobStore.StoreTrigger(trigger, false);
+            Assert.Equal(TriggerState.Normal, await fJobStore.GetTriggerState(trigger.Key));
 
-            fJobStore.PauseTrigger(trigger.Key);
-            Assert.AreEqual(TriggerState.Paused, fJobStore.GetTriggerState(trigger.Key));
+            await fJobStore.PauseTrigger(trigger.Key);
+            Assert.Equal(TriggerState.Paused, await fJobStore.GetTriggerState(trigger.Key));
 
-            fJobStore.ResumeTrigger(trigger.Key);
-            Assert.AreEqual(TriggerState.Normal, fJobStore.GetTriggerState(trigger.Key));
+            await fJobStore.ResumeTrigger(trigger.Key);
+            Assert.Equal(TriggerState.Normal, await fJobStore.GetTriggerState(trigger.Key));
 
-            trigger = fJobStore.AcquireNextTriggers(trigger.GetNextFireTimeUtc().Value.AddSeconds(10), 1, TimeSpan.FromMilliseconds(1))[0];
-            Assert.IsNotNull(trigger);
-            fJobStore.ReleaseAcquiredTrigger(trigger);
-            trigger = fJobStore.AcquireNextTriggers(trigger.GetNextFireTimeUtc().Value.AddSeconds(10), 1, TimeSpan.FromMilliseconds(1))[0];
-            Assert.IsNotNull(trigger);
-            Assert.AreEqual(0, fJobStore.AcquireNextTriggers(trigger.GetNextFireTimeUtc().Value.AddSeconds(10), 1, TimeSpan.FromMilliseconds(1)).Count);
+            trigger = (await fJobStore.AcquireNextTriggers(trigger.GetNextFireTimeUtc().Value.AddSeconds(10), 1, TimeSpan.FromMilliseconds(1)))[0];
+            Assert.NotNull(trigger);
+            await fJobStore.ReleaseAcquiredTrigger(trigger);
+            trigger = (await fJobStore.AcquireNextTriggers(trigger.GetNextFireTimeUtc().Value.AddSeconds(10), 1, TimeSpan.FromMilliseconds(1)))[0];
+            Assert.NotNull(trigger);
+            Assert.Equal(0, (await fJobStore.AcquireNextTriggers(trigger.GetNextFireTimeUtc().Value.AddSeconds(10), 1, TimeSpan.FromMilliseconds(1))).Count);
         }
 
-        [Test]
-        public void TestRemoveCalendarWhenTriggersPresent()
+        [Fact]
+        public async Task FactRemoveCalendarWhenTriggersPresent()
         {
-            InitJobStore();
+            await InitJobStore();
 
             // QRTZNET-29
 
             IOperableTrigger trigger = new SimpleTriggerImpl("trigger1", "triggerGroup1", fJobDetail.Name, fJobDetail.Group, DateTimeOffset.Now.AddSeconds(100), DateTimeOffset.Now.AddSeconds(200), 2, TimeSpan.FromSeconds(2));
             trigger.ComputeFirstFireTimeUtc(null);
             ICalendar cal = new MonthlyCalendar();
-            fJobStore.StoreTrigger(trigger, false);
-            fJobStore.StoreCalendar("cal", cal, false, true);
+            await fJobStore.StoreTrigger(trigger, false);
+            await fJobStore.StoreCalendar("cal", cal, false, true);
 
-            fJobStore.RemoveCalendar("cal");
+            await fJobStore.RemoveCalendar("cal");
         }
 
-        [Test]
-        public void TestStoreTriggerReplacesTrigger()
+        [Fact]
+        public async Task FactStoreTriggerReplacesTrigger()
         {
-            InitJobStore();
+            await InitJobStore();
 
             string jobName = "StoreJobReplacesJob";
             string jobGroup = "StoreJobReplacesJobGroup";
             JobDetailImpl detail = new JobDetailImpl(jobName, jobGroup, typeof (NoOpJob));
-            fJobStore.StoreJob(detail, false);
+            await fJobStore.StoreJob(detail, false);
 
             string trName = "StoreTriggerReplacesTrigger";
             string trGroup = "StoreTriggerReplacesTriggerGroup";
@@ -243,135 +245,129 @@ namespace Quartz.Impl.RavenDB.Tests
             tr.JobKey = new JobKey(jobName, jobGroup);
             tr.CalendarName = null;
 
-            fJobStore.StoreTrigger(tr, false);
-            Assert.AreEqual(tr, fJobStore.RetrieveTrigger(new TriggerKey(trName, trGroup)));
+            await fJobStore.StoreTrigger(tr, false);
+            Assert.Equal(tr, await fJobStore.RetrieveTrigger(new TriggerKey(trName, trGroup)));
 
             tr.CalendarName = "NonExistingCalendar";
-            fJobStore.StoreTrigger(tr, true);
-            Assert.AreEqual(tr, fJobStore.RetrieveTrigger(new TriggerKey(trName, trGroup)));
-            Assert.AreEqual(tr.CalendarName, fJobStore.RetrieveTrigger(new TriggerKey(trName, trGroup)).CalendarName, "StoreJob doesn't replace triggers");
+            await fJobStore.StoreTrigger(tr, true);
+            Assert.Equal(tr, await fJobStore.RetrieveTrigger(new TriggerKey(trName, trGroup)));
+            Assert.Equal(tr.CalendarName, (await fJobStore.RetrieveTrigger(new TriggerKey(trName, trGroup))).CalendarName);
 
             bool exceptionRaised = false;
             try
             {
-                fJobStore.StoreTrigger(tr, false);
+                await fJobStore.StoreTrigger(tr, false);
             }
             catch (ObjectAlreadyExistsException)
             {
                 exceptionRaised = true;
             }
-            Assert.IsTrue(exceptionRaised, "an attempt to store duplicate trigger succeeded");
+            Assert.True(exceptionRaised, "an attempt to store duplicate trigger succeeded");
         }
 
-        [Test]
-        public void PauseJobGroupPausesNewJob()
+        [Fact]
+        public async Task PauseJobGroupPausesNewJob()
         {
-            InitJobStore();
+            await InitJobStore();
 
             string jobName1 = "PauseJobGroupPausesNewJob";
             string jobName2 = "PauseJobGroupPausesNewJob2";
             string jobGroup = "PauseJobGroupPausesNewJobGroup";
             JobDetailImpl detail = new JobDetailImpl(jobName1, jobGroup, typeof (NoOpJob));
             detail.Durable = true;
-            fJobStore.StoreJob(detail, false);
-            fJobStore.PauseJobs(GroupMatcher<JobKey>.GroupEquals(jobGroup));
+            await fJobStore.StoreJob(detail, false);
+            await fJobStore.PauseJobs(GroupMatcher<JobKey>.GroupEquals(jobGroup));
 
             detail = new JobDetailImpl(jobName2, jobGroup, typeof (NoOpJob));
             detail.Durable = true;
-            fJobStore.StoreJob(detail, false);
+            await fJobStore.StoreJob(detail, false);
 
             string trName = "PauseJobGroupPausesNewJobTrigger";
             string trGroup = "PauseJobGroupPausesNewJobTriggerGroup";
             IOperableTrigger tr = new SimpleTriggerImpl(trName, trGroup, DateTimeOffset.UtcNow);
             tr.JobKey = new JobKey(jobName2, jobGroup);
-            fJobStore.StoreTrigger(tr, false);
-            Assert.AreEqual(TriggerState.Paused, fJobStore.GetTriggerState(tr.Key));
+            await fJobStore.StoreTrigger(tr, false);
+            Assert.Equal(TriggerState.Paused, await fJobStore.GetTriggerState(tr.Key));
         }
 
-        [Test]
-        public void TestRetrieveJob_NoJobFound()
+        [Fact]
+        public async Task FactRetrieveJob_NoJobFound()
         {
-            InitJobStore();
-
-            var store = new RavenJobStore();
-            IJobDetail job = store.RetrieveJob(new JobKey("not", "existing"));
-            Assert.IsNull(job);
+            await InitJobStore();
+            
+            IJobDetail job = await fJobStore.RetrieveJob(new JobKey("not", "existing"));
+            Assert.Null(job);
         }
 
-        [Test]
-        public void TestRetrieveTrigger_NoTriggerFound()
+        [Fact]
+        public async Task FactRetrieveTrigger_NoTriggerFound()
         {
-            InitJobStore();
+            await InitJobStore();
 
-            var store = new RavenJobStore();
-            IOperableTrigger trigger = store.RetrieveTrigger(new TriggerKey("not", "existing"));
-            Assert.IsNull(trigger);
+            IOperableTrigger trigger = await fJobStore.RetrieveTrigger(new TriggerKey("not", "existing"));
+            Assert.Null(trigger);
         }
 
-        [Test]
-        public void testStoreAndRetrieveJobs()
+        [Fact]
+        public async Task FactStoreAndRetrieveJobs()
         {
-            InitJobStore();
-
-            var store = new RavenJobStore();
+            await InitJobStore();
 
             // Store jobs.
             for (int i = 0; i < 10; i++)
             {
                 IJobDetail job = JobBuilder.Create<NoOpJob>().WithIdentity("job" + i).Build();
-                store.StoreJob(job, false);
+                await fJobStore.StoreJob(job, false);
             }
             // Retrieve jobs.
             for (int i = 0; i < 10; i++)
             {
                 JobKey jobKey = JobKey.Create("job" + i);
-                IJobDetail storedJob = store.RetrieveJob(jobKey);
-                Assert.AreEqual(jobKey, storedJob.Key);
+                IJobDetail storedJob = await fJobStore.RetrieveJob(jobKey);
+                Assert.Equal(jobKey, storedJob.Key);
             }
         }
 
-        [Test]
-        public void TestStoreAndRetrieveTriggers()
+        [Fact]
+        public async Task FactStoreAndRetrieveTriggers()
         {
-            InitJobStore();
-
-            var store = new RavenJobStore();
-            store.SchedulerStarted();
+            await InitJobStore();
+            
+            await fJobStore.SchedulerStarted();
 
             // Store jobs and triggers.
             for (int i = 0; i < 10; i++)
             {
                 IJobDetail job = JobBuilder.Create<NoOpJob>().WithIdentity("job" + i).Build();
-                store.StoreJob(job, true);
+                await fJobStore.StoreJob(job, true);
                 SimpleScheduleBuilder schedule = SimpleScheduleBuilder.Create();
                 ITrigger trigger = TriggerBuilder.Create().WithIdentity("trigger" + i).WithSchedule(schedule).ForJob(job).Build();
-                store.StoreTrigger((IOperableTrigger) trigger, true);
+                await fJobStore.StoreTrigger((IOperableTrigger) trigger, true);
             }
             // Retrieve job and trigger.
             for (int i = 0; i < 10; i++)
             {
                 JobKey jobKey = JobKey.Create("job" + i);
-                IJobDetail storedJob = store.RetrieveJob(jobKey);
-                Assert.AreEqual(jobKey, storedJob.Key);
+                IJobDetail storedJob = await fJobStore.RetrieveJob(jobKey);
+                Assert.Equal(jobKey, storedJob.Key);
 
                 TriggerKey triggerKey = new TriggerKey("trigger" + i);
-                ITrigger storedTrigger = store.RetrieveTrigger(triggerKey);
-                Assert.AreEqual(triggerKey, storedTrigger.Key);
+                ITrigger storedTrigger = await fJobStore.RetrieveTrigger(triggerKey);
+                Assert.Equal(triggerKey, storedTrigger.Key);
             }
         }
 
-        [Test]
-        public void TestAcquireTriggers()
+        [Fact]
+        public async Task FactAcquireTriggers()
         {
-            InitJobStore();
+            await InitJobStore();
 
             ISchedulerSignaler schedSignaler = new SampleSignaler();
             ITypeLoadHelper loadHelper = new SimpleTypeLoadHelper();
             loadHelper.Initialize();
 
-            var store = new RavenJobStore();
-            store.Initialize(loadHelper, schedSignaler);
-            store.SchedulerStarted();
+            await fJobStore.Initialize(loadHelper, schedSignaler);
+            await fJobStore.SchedulerStarted();
 
             // Setup: Store jobs and triggers.
             DateTime startTime0 = DateTime.UtcNow.AddMinutes(1).ToUniversalTime(); // a min from now.
@@ -385,37 +381,36 @@ namespace Quartz.Impl.RavenDB.Tests
                 // Manually trigger the first fire time computation that scheduler would do. Otherwise 
                 // the store.acquireNextTriggers() will not work properly.
                 DateTimeOffset? fireTime = trigger.ComputeFirstFireTimeUtc(null);
-                Assert.AreEqual(true, fireTime != null);
+                Assert.Equal(true, fireTime != null);
 
-                store.StoreJobAndTrigger(job, trigger);
+                await fJobStore.StoreJobAndTrigger(job, trigger);
             }
 
-            // Test acquire one trigger at a time
+            // Fact acquire one trigger at a time
             for (int i = 0; i < 10; i++)
             {
                 DateTimeOffset noLaterThan = startTime0.AddMinutes(i);
                 int maxCount = 1;
                 TimeSpan timeWindow = TimeSpan.Zero;
-                IList<IOperableTrigger> triggers = store.AcquireNextTriggers(noLaterThan, maxCount, timeWindow);
-                Assert.AreEqual(1, triggers.Count);
-                Assert.AreEqual("trigger" + i, triggers[0].Key.Name);
+                var triggers = await fJobStore.AcquireNextTriggers(noLaterThan, maxCount, timeWindow);
+                Assert.Equal(1, triggers.Count);
+                Assert.Equal("trigger" + i, triggers[0].Key.Name);
 
                 // Let's remove the trigger now.
-                store.RemoveJob(triggers[0].JobKey);
+                await fJobStore.RemoveJob(triggers[0].JobKey);
             }
         }
 
-        [Test]
-        public void TestAcquireTriggersInBatch()
+        [Fact]
+        public async Task FactAcquireTriggersInBatch()
         {
-            InitJobStore();
+            await InitJobStore();
 
             ISchedulerSignaler schedSignaler = new SampleSignaler();
             ITypeLoadHelper loadHelper = new SimpleTypeLoadHelper();
             loadHelper.Initialize();
 
-            var store = new RavenJobStore();
-            store.Initialize(loadHelper, schedSignaler);
+            await fJobStore.Initialize(loadHelper, schedSignaler);
 
             // Setup: Store jobs and triggers.
             DateTimeOffset startTime0 = DateTimeOffset.UtcNow.AddMinutes(1); // a min from now.
@@ -429,48 +424,48 @@ namespace Quartz.Impl.RavenDB.Tests
                 // Manually trigger the first fire time computation that scheduler would do. Otherwise 
                 // the store.acquireNextTriggers() will not work properly.
                 DateTimeOffset? fireTime = trigger.ComputeFirstFireTimeUtc(null);
-                Assert.AreEqual(true, fireTime != null);
+                Assert.Equal(true, fireTime != null);
 
-                store.StoreJobAndTrigger(job, trigger);
+                await fJobStore.StoreJobAndTrigger(job, trigger);
             }
 
-            // Test acquire batch of triggers at a time
+            // Fact acquire batch of triggers at a time
             DateTimeOffset noLaterThan = startTime0.AddMinutes(10);
             int maxCount = 7;
             TimeSpan timeWindow = TimeSpan.FromMinutes(8);
-            IList<IOperableTrigger> triggers = store.AcquireNextTriggers(noLaterThan, maxCount, timeWindow);
-            Assert.AreEqual(7, triggers.Count);
+            var triggers = await fJobStore.AcquireNextTriggers(noLaterThan, maxCount, timeWindow);
+            Assert.Equal(7, triggers.Count);
             for (int i = 0; i < 7; i++)
             {
-                Assert.AreEqual("trigger" + i, triggers[i].Key.Name);
+                Assert.Equal("trigger" + i, triggers[i].Key.Name);
             }
         }
 
-        [Test]
-        public void TestBasicStorageFunctions()
+        [Fact]
+        public async Task FactBasicStorageFunctions()
         {
-            var sched = CreateScheduler("TestBasicStorageFunctions", 2);
-            sched.Start();
+            var sched = await CreateScheduler("FactBasicStorageFunctions", 2);
+            await sched.Start();
 
-            // test basic storage functions of scheduler...
+            // Fact basic storage functions of scheduler...
 
             IJobDetail job = JobBuilder.Create()
-                                       .OfType<TestJob>()
+                                       .OfType<FactJob>()
                                        .WithIdentity("j1")
                                        .StoreDurably()
                                        .Build();
 
-            Assert.IsFalse(sched.CheckExists(new JobKey("j1")), "Unexpected existence of job named 'j1'.");
+            Assert.False(await sched.CheckExists(new JobKey("j1")), "Unexpected existence of job named 'j1'.");
 
-            sched.AddJob(job, false);
+            await sched.AddJob(job, false);
 
-            Assert.IsTrue(sched.CheckExists(new JobKey("j1")), "Expected existence of job named 'j1' but checkExists return false.");
+            Assert.True(await sched.CheckExists(new JobKey("j1")), "Expected existence of job named 'j1' but checkExists return false.");
 
-            job = sched.GetJobDetail(new JobKey("j1"));
+            job = await sched.GetJobDetail(new JobKey("j1"));
 
-            Assert.IsNotNull(job, "Stored job not found!");
+            Assert.NotNull(job);
 
-            sched.DeleteJob(new JobKey("j1"));
+            await sched.DeleteJob(new JobKey("j1"));
 
             ITrigger trigger = TriggerBuilder.Create()
                                              .WithIdentity("t1")
@@ -479,22 +474,22 @@ namespace Quartz.Impl.RavenDB.Tests
                                              .WithSimpleSchedule(x => x.RepeatForever().WithIntervalInSeconds(5))
                                              .Build();
 
-            Assert.IsFalse(sched.CheckExists(new TriggerKey("t1")), "Unexpected existence of trigger named '11'.");
+            Assert.False(await sched.CheckExists(new TriggerKey("t1")), "Unexpected existence of trigger named '11'.");
 
-            sched.ScheduleJob(job, trigger);
+            await sched.ScheduleJob(job, trigger);
 
-            Assert.IsTrue(sched.CheckExists(new TriggerKey("t1")), "Expected existence of trigger named 't1' but checkExists return false.");
+            Assert.True(await sched.CheckExists(new TriggerKey("t1")));
 
-            job = sched.GetJobDetail(new JobKey("j1"));
+            job = await sched.GetJobDetail(new JobKey("j1"));
 
-            Assert.IsNotNull(job, "Stored job not found!");
+            Assert.NotNull(job);
 
-            trigger = sched.GetTrigger(new TriggerKey("t1"));
+            trigger = await sched.GetTrigger(new TriggerKey("t1"));
 
-            Assert.IsNotNull(trigger, "Stored trigger not found!");
+            Assert.NotNull(trigger);
 
             job = JobBuilder.Create()
-                            .OfType<TestJob>()
+                            .OfType<FactJob>()
                             .WithIdentity("j2", "g1")
                             .Build();
 
@@ -505,10 +500,10 @@ namespace Quartz.Impl.RavenDB.Tests
                                     .WithSimpleSchedule(x => x.RepeatForever().WithIntervalInSeconds(5))
                                     .Build();
 
-            sched.ScheduleJob(job, trigger);
+            await sched.ScheduleJob(job, trigger);
 
             job = JobBuilder.Create()
-                            .OfType<TestJob>()
+                            .OfType<FactJob>()
                             .WithIdentity("j3", "g1")
                             .Build();
 
@@ -519,47 +514,47 @@ namespace Quartz.Impl.RavenDB.Tests
                                     .WithSimpleSchedule(x => x.RepeatForever().WithIntervalInSeconds(5))
                                     .Build();
 
-            sched.ScheduleJob(job, trigger);
+            await sched.ScheduleJob(job, trigger);
 
 
-            IList<string> jobGroups = sched.GetJobGroupNames();
-            IList<string> triggerGroups = sched.GetTriggerGroupNames();
+            var jobGroups = await sched.GetJobGroupNames();
+            var triggerGroups = await sched.GetTriggerGroupNames();
 
-            Assert.AreEqual(2, jobGroups.Count, "Job group list size expected to be = 2 ");
-            Assert.AreEqual(2, triggerGroups.Count, "Trigger group list size expected to be = 2 ");
+            Assert.Equal(2, jobGroups.Count);
+            Assert.Equal(2, triggerGroups.Count);
 
-            Collection.ISet<JobKey> jobKeys = sched.GetJobKeys(GroupMatcher<JobKey>.GroupEquals(JobKey.DefaultGroup));
-            Collection.ISet<TriggerKey> triggerKeys = sched.GetTriggerKeys(GroupMatcher<TriggerKey>.GroupEquals(TriggerKey.DefaultGroup));
+            ISet<JobKey> jobKeys = await sched.GetJobKeys(GroupMatcher<JobKey>.GroupEquals(JobKey.DefaultGroup));
+            ISet<TriggerKey> triggerKeys = await sched.GetTriggerKeys(GroupMatcher<TriggerKey>.GroupEquals(TriggerKey.DefaultGroup));
 
-            Assert.AreEqual(1, jobKeys.Count, "Number of jobs expected in default group was 1 ");
-            Assert.AreEqual(1, triggerKeys.Count, "Number of triggers expected in default group was 1 ");
+            Assert.Equal(1, jobKeys.Count);
+            Assert.Equal(1, triggerKeys.Count);
 
-            jobKeys = sched.GetJobKeys(GroupMatcher<JobKey>.GroupEquals("g1"));
-            triggerKeys = sched.GetTriggerKeys(GroupMatcher<TriggerKey>.GroupEquals("g1"));
+            jobKeys = await sched.GetJobKeys(GroupMatcher<JobKey>.GroupEquals("g1"));
+            triggerKeys = await sched.GetTriggerKeys(GroupMatcher<TriggerKey>.GroupEquals("g1"));
 
-            Assert.AreEqual(2, jobKeys.Count, "Number of jobs expected in 'g1' group was 2 ");
-            Assert.AreEqual(2, triggerKeys.Count, "Number of triggers expected in 'g1' group was 2 ");
+            Assert.Equal(2, jobKeys.Count);
+            Assert.Equal(2, triggerKeys.Count);
 
 
-            TriggerState s = sched.GetTriggerState(new TriggerKey("t2", "g1"));
-            Assert.AreEqual(TriggerState.Normal, s, "State of trigger t2 expected to be NORMAL ");
+            TriggerState s = await sched.GetTriggerState(new TriggerKey("t2", "g1"));
+            Assert.Equal(TriggerState.Normal, s);
 
-            sched.PauseTrigger(new TriggerKey("t2", "g1"));
-            s = sched.GetTriggerState(new TriggerKey("t2", "g1"));
-            Assert.AreEqual(TriggerState.Paused, s, "State of trigger t2 expected to be PAUSED ");
+            await sched.PauseTrigger(new TriggerKey("t2", "g1"));
+            s = await sched.GetTriggerState(new TriggerKey("t2", "g1"));
+            Assert.Equal(TriggerState.Paused, s);
 
-            sched.ResumeTrigger(new TriggerKey("t2", "g1"));
-            s = sched.GetTriggerState(new TriggerKey("t2", "g1"));
-            Assert.AreEqual(TriggerState.Normal, s, "State of trigger t2 expected to be NORMAL ");
+            await sched.ResumeTrigger(new TriggerKey("t2", "g1"));
+            s = await sched.GetTriggerState(new TriggerKey("t2", "g1"));
+            Assert.Equal(TriggerState.Normal, s);
 
-            Collection.ISet<string> pausedGroups = sched.GetPausedTriggerGroups();
-            Assert.AreEqual(0, pausedGroups.Count, "Size of paused trigger groups list expected to be 0 ");
+            ISet<string> pausedGroups = await sched.GetPausedTriggerGroups();
+            Assert.Equal(0, pausedGroups.Count);
 
-            sched.PauseTriggers(GroupMatcher<TriggerKey>.GroupEquals("g1"));
+            await sched.PauseTriggers(GroupMatcher<TriggerKey>.GroupEquals("g1"));
 
-            // test that adding a trigger to a paused group causes the new trigger to be paused also... 
+            // Fact that adding a trigger to a paused group causes the new trigger to be paused also... 
             job = JobBuilder.Create()
-                            .OfType<TestJob>()
+                            .OfType<FactJob>()
                             .WithIdentity("j4", "g1")
                             .Build();
 
@@ -570,51 +565,51 @@ namespace Quartz.Impl.RavenDB.Tests
                                     .WithSimpleSchedule(x => x.RepeatForever().WithIntervalInSeconds(5))
                                     .Build();
 
-            sched.ScheduleJob(job, trigger);
+            await sched.ScheduleJob(job, trigger);
 
-            pausedGroups = sched.GetPausedTriggerGroups();
-            Assert.AreEqual(1, pausedGroups.Count, "Size of paused trigger groups list expected to be 1 ");
+            pausedGroups = await sched.GetPausedTriggerGroups();
+            Assert.Equal(1, pausedGroups.Count);
 
-            s = sched.GetTriggerState(new TriggerKey("t2", "g1"));
-            Assert.AreEqual(TriggerState.Paused, s, "State of trigger t2 expected to be PAUSED ");
+            s = await sched.GetTriggerState(new TriggerKey("t2", "g1"));
+            Assert.Equal(TriggerState.Paused, s);
 
-            s = sched.GetTriggerState(new TriggerKey("t4", "g1"));
-            Assert.AreEqual(TriggerState.Paused, s, "State of trigger t4 expected to be PAUSED");
+            s = await sched.GetTriggerState(new TriggerKey("t4", "g1"));
+            Assert.Equal(TriggerState.Paused, s);
 
-            sched.ResumeTriggers(GroupMatcher<TriggerKey>.GroupEquals("g1"));
+            await sched.ResumeTriggers(GroupMatcher<TriggerKey>.GroupEquals("g1"));
 
-            s = sched.GetTriggerState(new TriggerKey("t2", "g1"));
-            Assert.AreEqual(TriggerState.Normal, s, "State of trigger t2 expected to be NORMAL ");
+            s = await sched.GetTriggerState(new TriggerKey("t2", "g1"));
+            Assert.Equal(TriggerState.Normal, s);
 
-            s = sched.GetTriggerState(new TriggerKey("t4", "g1"));
-            Assert.AreEqual(TriggerState.Normal, s, "State of trigger t2 expected to be NORMAL ");
+            s = await sched.GetTriggerState(new TriggerKey("t4", "g1"));
+            Assert.Equal(TriggerState.Normal, s);
 
-            pausedGroups = sched.GetPausedTriggerGroups();
-            Assert.AreEqual(0, pausedGroups.Count, "Size of paused trigger groups list expected to be 0 ");
+            pausedGroups = await sched.GetPausedTriggerGroups();
+            Assert.Equal(0, pausedGroups.Count);
 
 
-            Assert.IsFalse(sched.UnscheduleJob(new TriggerKey("foasldfksajdflk")), "Scheduler should have returned 'false' from attempt to unschedule non-existing trigger. ");
+            Assert.False(await sched.UnscheduleJob(new TriggerKey("foasldfksajdflk")));
 
-            Assert.IsTrue(sched.UnscheduleJob(new TriggerKey("t3", "g1")), "Scheduler should have returned 'true' from attempt to unschedule existing trigger. ");
+            Assert.True(await sched.UnscheduleJob(new TriggerKey("t3", "g1")));
 
-            jobKeys = sched.GetJobKeys(GroupMatcher<JobKey>.GroupEquals("g1"));
-            triggerKeys = sched.GetTriggerKeys(GroupMatcher<TriggerKey>.GroupEquals("g1"));
+            jobKeys = await sched.GetJobKeys(GroupMatcher<JobKey>.GroupEquals("g1"));
+            triggerKeys = await sched.GetTriggerKeys(GroupMatcher<TriggerKey>.GroupEquals("g1"));
 
-            Assert.AreEqual(2, jobKeys.Count, "Number of jobs expected in 'g1' group was 2 "); // job should have been deleted also, because it is non-durable
-            Assert.AreEqual(2, triggerKeys.Count, "Number of triggers expected in 'g1' group was 2 ");
+            Assert.Equal(2, jobKeys.Count); // job should have been deleted also, because it is non-durable
+            Assert.Equal(2, triggerKeys.Count);
 
-            Assert.IsTrue(sched.UnscheduleJob(new TriggerKey("t1")), "Scheduler should have returned 'true' from attempt to unschedule existing trigger. ");
+            Assert.True(await sched.UnscheduleJob(new TriggerKey("t1")), "Scheduler should have returned 'true' from attempt to unschedule existing trigger. ");
 
-            jobKeys = sched.GetJobKeys(GroupMatcher<JobKey>.GroupEquals(JobKey.DefaultGroup));
-            triggerKeys = sched.GetTriggerKeys(GroupMatcher<TriggerKey>.GroupEquals(TriggerKey.DefaultGroup));
+            jobKeys = await sched.GetJobKeys(GroupMatcher<JobKey>.GroupEquals(JobKey.DefaultGroup));
+            triggerKeys = await sched.GetTriggerKeys(GroupMatcher<TriggerKey>.GroupEquals(TriggerKey.DefaultGroup));
 
-            Assert.AreEqual(1, jobKeys.Count, "Number of jobs expected in default group was 1 "); // job should have been left in place, because it is non-durable
-            Assert.AreEqual(0, triggerKeys.Count, "Number of triggers expected in default group was 0 ");
+            Assert.Equal(1, jobKeys.Count); // job should have been left in place, because it is non-durable
+            Assert.Equal(0, triggerKeys.Count);
 
-            sched.Shutdown();
+            await sched.Shutdown();
         }
 
-        private IScheduler CreateScheduler(string name, int threadCount)
+        private async Task<IScheduler> CreateScheduler(string name, int threadCount)
         {
             NameValueCollection properties = new NameValueCollection
             {
@@ -627,73 +622,74 @@ namespace Quartz.Impl.RavenDB.Tests
                 ["quartz.jobStore.type"] = "Quartz.Impl.RavenDB.RavenJobStore, Quartz.Impl.RavenDB",
             };
 
-            IScheduler sched = new StdSchedulerFactory(properties).GetScheduler();
+            IScheduler sched = await new StdSchedulerFactory(properties).GetScheduler();
             return sched;
         }
 
         private const string Barrier = "BARRIER";
-        private const string DateStamps = "DATE_STAMPS";
+        private const string DaFactamps = "DATE_STAMPS";
         [DisallowConcurrentExecution]
         [PersistJobDataAfterExecution]
-        public class TestStatefulJob : IJob
+        public class FactStatefulJob : IJob
         {
-            public void Execute(IJobExecutionContext context)
+            public async Task Execute(IJobExecutionContext context)
             {
+                await Task.FromResult(0);
             }
         }
 
-        public class TestJob : IJob
+        public class FactJob : IJob
         {
-            public void Execute(IJobExecutionContext context)
+            public async Task Execute(IJobExecutionContext context)
             {
+                await Task.FromResult(0);
             }
         }
 
-        private static readonly TimeSpan testTimeout = TimeSpan.FromSeconds(125);
+        private static readonly TimeSpan FactTimeout = TimeSpan.FromSeconds(125);
 
-        public class TestJobWithSync : IJob
+        public class FactJobWithSync : IJob
         {
-            public void Execute(IJobExecutionContext context)
+            public async Task Execute(IJobExecutionContext context)
             {
                 try
                 {
-                    List<DateTime> jobExecTimestamps = (List<DateTime>) context.Scheduler.Context.Get(DateStamps);
+                    List<DateTime> jobExecTimestamps = (List<DateTime>) context.Scheduler.Context.Get(DaFactamps);
                     Barrier barrier = (Barrier) context.Scheduler.Context.Get(Barrier);
 
                     jobExecTimestamps.Add(DateTime.UtcNow);
 
-                    barrier.SignalAndWait(testTimeout);
+                    barrier.SignalAndWait(FactTimeout);
+                    await Task.FromResult(0);
                 }
                 catch (Exception e)
                 {
                     Console.Write(e);
-                    Assert.Fail("Await on barrier was interrupted: " + e);
                 }
             }
         }
 
         [DisallowConcurrentExecution]
         [PersistJobDataAfterExecution]
-        public class TestAnnotatedJob : IJob
+        public class FactAnnotatedJob : IJob
         {
-            public void Execute(IJobExecutionContext context)
+            public async Task Execute(IJobExecutionContext context)
             {
+                await Task.FromResult(0);
             }
         }
-        [Test]
-        public void TestAbilityToFireImmediatelyWhenStartedBefore()
+        [Fact]
+        public async Task FactAbilityToFireImmediatelyWhenStartedBefore()
         {
             List<DateTime> jobExecTimestamps = new List<DateTime>();
             Barrier barrier = new Barrier(2);
 
-            IScheduler sched = CreateScheduler("testAbilityToFireImmediatelyWhenStartedBefore", 5);
+            IScheduler sched = await CreateScheduler("FactAbilityToFireImmediatelyWhenStartedBefore", 5);
             sched.Context.Put(Barrier, barrier);
-            sched.Context.Put(DateStamps, jobExecTimestamps);
-            sched.Start();
+            sched.Context.Put(DaFactamps, jobExecTimestamps);
+            await sched.Start();
 
-            Thread.Yield();
-
-            IJobDetail job1 = JobBuilder.Create<TestJobWithSync>()
+            IJobDetail job1 = JobBuilder.Create<FactJobWithSync>()
                 .WithIdentity("job1")
                 .Build();
 
@@ -703,84 +699,82 @@ namespace Quartz.Impl.RavenDB.Tests
 
             DateTime sTime = DateTime.UtcNow;
 
-            sched.ScheduleJob(job1, trigger1);
+            await sched.ScheduleJob(job1, trigger1);
 
-            barrier.SignalAndWait(testTimeout);
+            barrier.SignalAndWait(FactTimeout);
 
-            sched.Shutdown(false);
+            await sched.Shutdown(false);
 
             DateTime fTime = jobExecTimestamps[0];
 
-            Assert.That(fTime - sTime < TimeSpan.FromMilliseconds(7000), "Immediate trigger did not fire within a reasonable amount of time.");
+            Assert.True(fTime - sTime < TimeSpan.FromMilliseconds(7000));
         }
 
-        [Test]
-        public void TestAbilityToFireImmediatelyWhenStartedBeforeWithTriggerJob()
+        [Fact]
+        public async Task FactAbilityToFireImmediatelyWhenStartedBeforeWithTriggerJob()
         {
             List<DateTime> jobExecTimestamps = new List<DateTime>();
             Barrier barrier = new Barrier(2);
 
-            IScheduler sched = CreateScheduler("testAbilityToFireImmediatelyWhenStartedBeforeWithTriggerJob", 5);
-            sched.Clear();
+            IScheduler sched = await CreateScheduler("FactAbilityToFireImmediatelyWhenStartedBeforeWithTriggerJob", 5);
+            await sched.Clear();
 
             sched.Context.Put(Barrier, barrier);
-            sched.Context.Put(DateStamps, jobExecTimestamps);
+            sched.Context.Put(DaFactamps, jobExecTimestamps);
 
-            sched.Start();
-
-            Thread.Yield();
-
-            IJobDetail job1 = JobBuilder.Create<TestJobWithSync>()
+            await sched.Start();
+            
+            IJobDetail job1 = JobBuilder.Create<FactJobWithSync>()
                 .WithIdentity("job1").
                 StoreDurably().Build();
-            sched.AddJob(job1, false);
+            await sched.AddJob(job1, false);
 
             DateTime sTime = DateTime.UtcNow;
 
-            sched.TriggerJob(job1.Key);
+            await sched.TriggerJob(job1.Key);
 
-            barrier.SignalAndWait(testTimeout);
+            barrier.SignalAndWait(FactTimeout);
 
-            sched.Shutdown(false);
+            await sched.Shutdown(false);
 
             DateTime fTime = jobExecTimestamps[0];
 
-            Assert.That(fTime - sTime < TimeSpan.FromMilliseconds(7000), "Immediate trigger did not fire within a reasonable amount of time."); // This is dangerously subjective!  but what else to do?
+            Assert.True(fTime - sTime < TimeSpan.FromMilliseconds(7000)); // This is dangerously subjective!  but what else to do?
         }
 
-        [Test]
-        public void TestAbilityToFireImmediatelyWhenStartedAfter()
+        [Fact]
+        public async Task FactAbilityToFireImmediatelyWhenStartedAfter()
         {
             List<DateTime> jobExecTimestamps = new List<DateTime>();
 
             Barrier barrier = new Barrier(2);
 
-            IScheduler sched = CreateScheduler("testAbilityToFireImmediatelyWhenStartedAfter", 5);
+            IScheduler sched = await CreateScheduler("FactAbilityToFireImmediatelyWhenStartedAfter", 5);
 
             sched.Context.Put(Barrier, barrier);
-            sched.Context.Put(DateStamps, jobExecTimestamps);
+            sched.Context.Put(DaFactamps, jobExecTimestamps);
 
-            IJobDetail job1 = JobBuilder.Create<TestJobWithSync>().WithIdentity("job1").Build();
+            IJobDetail job1 = JobBuilder.Create<FactJobWithSync>().WithIdentity("job1").Build();
             ITrigger trigger1 = TriggerBuilder.Create().ForJob(job1).Build();
 
             DateTime sTime = DateTime.UtcNow;
 
-            sched.Start();
-            sched.ScheduleJob(job1, trigger1);
+            await sched.Start();
+            await sched.ScheduleJob(job1, trigger1);
 
-            barrier.SignalAndWait(testTimeout);
+            barrier.SignalAndWait(FactTimeout);
 
-            sched.Shutdown(false);
+            await sched.Shutdown(false);
 
             DateTime fTime = jobExecTimestamps[0];
 
-            Assert.That((fTime - sTime < TimeSpan.FromMilliseconds(7000)), "Immediate trigger did not fire within a reasonable amount of time."); // This is dangerously subjective!  but what else to do?
+            Assert.True((fTime - sTime < TimeSpan.FromMilliseconds(7000))); // This is dangerously subjective!  but what else to do?
         }
 
-        [Test]
-        public void TestScheduleMultipleTriggersForAJob()
+        [Fact]
+        public async Task FactScheduleMultipleTriggersForAJob()
         {
-            IJobDetail job = JobBuilder.Create<TestJob>().WithIdentity("job1", "group1").Build();
+            IJobDetail job = JobBuilder.Create<FactJob>().WithIdentity("job1", "group1").Build();
             ITrigger trigger1 = TriggerBuilder.Create()
                 .WithIdentity("trigger1", "group1")
                 .StartNow()
@@ -792,105 +786,103 @@ namespace Quartz.Impl.RavenDB.Tests
                 .WithSimpleSchedule(x => x.WithIntervalInSeconds(1).RepeatForever())
                 .Build();
 
-            Collection.ISet<ITrigger> triggersForJob = new Collection.HashSet<ITrigger>();
+            ISet<ITrigger> triggersForJob = new HashSet<ITrigger>();
             triggersForJob.Add(trigger1);
             triggersForJob.Add(trigger2);
 
-            IScheduler sched = CreateScheduler("testScheduleMultipleTriggersForAJob", 5);
-            sched.Start();
+            IScheduler sched = await CreateScheduler("FactScheduleMultipleTriggersForAJob", 5);
+            await sched.Start();
 
 
-            sched.ScheduleJob(job, triggersForJob, true);
+            await sched.ScheduleJob(job, triggersForJob, true);
 
-            IList<ITrigger> triggersOfJob = sched.GetTriggersOfJob(job.Key);
-            Assert.That(triggersOfJob.Count, Is.EqualTo(2));
-            Assert.That(triggersOfJob.Contains(trigger1));
-            Assert.That(triggersOfJob.Contains(trigger2));
+            var triggersOfJob = await sched.GetTriggersOfJob(job.Key);
+            Assert.Equal(2, triggersOfJob.Count);
 
-            sched.Shutdown(false);
+            await sched.Shutdown(false);
         }
 
-        [Test]
-        public void TestDurableStorageFunctions()
+        [Fact]
+        public async Task FactDurableStorageFunctions()
         {
-            IScheduler sched = CreateScheduler("testDurableStorageFunctions", 2);
-            sched.Clear();
+            IScheduler sched = await CreateScheduler("FactDurableStorageFunctions", 2);
+            await sched.Clear();
 
-            // test basic storage functions of scheduler...
+            // Fact basic storage functions of scheduler...
 
-            IJobDetail job = JobBuilder.Create<TestJob>()
+            IJobDetail job = JobBuilder.Create<FactJob>()
                 .WithIdentity("j1")
                 .StoreDurably()
                 .Build();
 
-            Assert.That(sched.CheckExists(new JobKey("j1")), Is.False, "Unexpected existence of job named 'j1'.");
+            Assert.False(await sched.CheckExists(new JobKey("j1")));
 
-            sched.AddJob(job, false);
+            await sched.AddJob(job, false);
 
-            Assert.That(sched.CheckExists(new JobKey("j1")), "Unexpected non-existence of job named 'j1'.");
+            Assert.True(await sched.CheckExists(new JobKey("j1")));
 
-            IJobDetail nonDurableJob = JobBuilder.Create<TestJob>()
+            IJobDetail nonDurableJob = JobBuilder.Create<FactJob>()
                 .WithIdentity("j2")
                 .Build();
 
             try
             {
-                sched.AddJob(nonDurableJob, false);
-                Assert.Fail("Storage of non-durable job should not have succeeded.");
+                await sched.AddJob(nonDurableJob, false);
+                Assert.True(false);
             }
             catch (SchedulerException)
             {
-                Assert.That(sched.CheckExists(new JobKey("j2")), Is.False, "Unexpected existence of job named 'j2'.");
+                Assert.False(await sched.CheckExists(new JobKey("j2")));
             }
 
-            sched.AddJob(nonDurableJob, false, true);
+            await sched.AddJob(nonDurableJob, false, true);
 
-            Assert.That(sched.CheckExists(new JobKey("j2")), "Unexpected non-existence of job named 'j2'.");
+            Assert.True(await sched.CheckExists(new JobKey("j2")));
         }
 
-        [Test]
-        public void TestShutdownWithoutWaitIsUnclean()
+        [Fact]
+        public async Task FactShutdownWithoutWaitIsUnclean()
         {
             List<DateTime> jobExecTimestamps = new List<DateTime>();
             Barrier barrier = new Barrier(2);
-            IScheduler scheduler = CreateScheduler("testShutdownWithoutWaitIsUnclean", 8);
+            IScheduler scheduler = await CreateScheduler("FactShutdownWithoutWaitIsUnclean", 8);
             try
             {
                 scheduler.Context.Put(Barrier, barrier);
-                scheduler.Context.Put(DateStamps, jobExecTimestamps);
-                scheduler.Start();
+                scheduler.Context.Put(DaFactamps, jobExecTimestamps);
+                await scheduler.Start();
                 string jobName = Guid.NewGuid().ToString();
-                scheduler.AddJob(JobBuilder.Create<TestJobWithSync>().WithIdentity(jobName).StoreDurably().Build(), false);
-                scheduler.ScheduleJob(TriggerBuilder.Create().ForJob(jobName).StartNow().Build());
-                while (scheduler.GetCurrentlyExecutingJobs().Count == 0)
+                await scheduler.AddJob(JobBuilder.Create<FactJobWithSync>().WithIdentity(jobName).StoreDurably().Build(), false);
+                await scheduler.ScheduleJob(TriggerBuilder.Create().ForJob(jobName).StartNow().Build());
+                while ((await scheduler.GetCurrentlyExecutingJobs()).Count == 0)
                 {
                     Thread.Sleep(50);
                 }
             }
             finally
             {
-                scheduler.Shutdown(false);
+                await scheduler.Shutdown(false);
             }
 
-            barrier.SignalAndWait(testTimeout);
+            barrier.SignalAndWait(FactTimeout);
         }
 
-        [Test]
-        public void TestShutdownWithWaitIsClean()
+        [Fact]
+        public async Task FactShutdownWithWaitIsClean()
         {
             bool shutdown = false;
             List<DateTime> jobExecTimestamps = new List<DateTime>();
             Barrier barrier = new Barrier(2);
-            IScheduler scheduler = CreateScheduler("testShutdownWithoutWaitIsUnclean", 8);
+            IScheduler scheduler = await CreateScheduler("FactShutdownWithoutWaitIsUnclean", 8);
             try
             {
                 scheduler.Context.Put(Barrier, barrier);
-                scheduler.Context.Put(DateStamps, jobExecTimestamps);
-                scheduler.Start();
+                scheduler.Context.Put(DaFactamps, jobExecTimestamps);
+                await scheduler.Start();
                 string jobName = Guid.NewGuid().ToString();
-                scheduler.AddJob(JobBuilder.Create<TestJobWithSync>().WithIdentity(jobName).StoreDurably().Build(), false);
-                scheduler.ScheduleJob(TriggerBuilder.Create().ForJob(jobName).StartNow().Build());
-                while (scheduler.GetCurrentlyExecutingJobs().Count == 0)
+                await scheduler.AddJob(JobBuilder.Create<FactJobWithSync>().WithIdentity(jobName).StoreDurably().Build(), false);
+                await scheduler.ScheduleJob(TriggerBuilder.Create().ForJob(jobName).StartNow().Build());
+                while ((await scheduler.GetCurrentlyExecutingJobs()).Count == 0)
                 {
                     Thread.Sleep(50);
                 }
@@ -913,8 +905,8 @@ namespace Quartz.Impl.RavenDB.Tests
                 var t = new Thread(threadStart);
                 t.Start();
                 Thread.Sleep(1000);
-                Assert.That(shutdown, Is.False);
-                barrier.SignalAndWait(testTimeout);
+                Assert.False(shutdown);
+                barrier.SignalAndWait(FactTimeout);
                 t.Join();
             }
         }
@@ -923,25 +915,29 @@ namespace Quartz.Impl.RavenDB.Tests
         {
             internal int fMisfireCount = 0;
 
-            public void NotifyTriggerListenersMisfired(ITrigger trigger)
+            public async Task NotifyTriggerListenersMisfired(ITrigger trigger)
             {
                 fMisfireCount++;
+                await Task.FromResult(0);
             }
 
-            public void NotifySchedulerListenersFinalized(ITrigger trigger)
+            public async Task NotifySchedulerListenersFinalized(ITrigger trigger)
             {
+                await Task.FromResult(0);
             }
 
             public void SignalSchedulingChange(DateTimeOffset? candidateNewNextFireTimeUtc)
             {
             }
 
-            public void NotifySchedulerListenersError(string message, SchedulerException jpe)
+            public async Task NotifySchedulerListenersError(string message, SchedulerException jpe)
             {
+                await Task.FromResult(0);
             }
 
-            public void NotifySchedulerListenersJobDeleted(JobKey jobKey)
+            public async Task NotifySchedulerListenersJobDeleted(JobKey jobKey)
             {
+                await Task.FromResult(0);
             }
         }
     }

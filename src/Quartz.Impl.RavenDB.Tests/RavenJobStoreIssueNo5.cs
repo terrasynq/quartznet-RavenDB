@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Specialized;
-using NUnit.Framework;
+using System.Threading.Tasks;
+using Xunit;
 
 namespace Quartz.Impl.RavenDB.Tests
 {
@@ -18,27 +19,27 @@ namespace Quartz.Impl.RavenDB.Tests
             .WithIdentity("job", "g1")
             .Build();
 
-        private void ScheduleTestJobAndWaitForExecution(IScheduler scheduler)
+        private async Task ScheduleTestJobAndWaitForExecution(IScheduler scheduler)
         {
             scheduler.ListenerManager.AddJobListener(listener);
-            scheduler.Start();
-            scheduler.ScheduleJob(job, trigger);
-            while (!scheduler.CheckExists(job.Key)) ;
-            scheduler.Shutdown(true);
+            await scheduler.Start();
+            await scheduler.ScheduleJob(job, trigger);
+            while (!await scheduler.CheckExists(job.Key)) ;
+            await scheduler.Shutdown(true);
         }
 
-        [Test]
-        public void InMemory()
+        [Fact]
+        public async Task InMemory()
         {
-            var scheduler = StdSchedulerFactory.GetDefaultScheduler();
+            var scheduler = await StdSchedulerFactory.GetDefaultScheduler();
 
-            ScheduleTestJobAndWaitForExecution(scheduler);
+            await ScheduleTestJobAndWaitForExecution(scheduler);
 
             Assert.True(listener.WasExecuted);
         }
 
-        [Test]
-        public void InRavenDB()
+        [Fact]
+        public async Task InRavenDB()
         {
              NameValueCollection properties = new NameValueCollection
             {
@@ -50,34 +51,36 @@ namespace Quartz.Impl.RavenDB.Tests
             };
 
             ISchedulerFactory sf = new StdSchedulerFactory(properties);
-            IScheduler scheduler = sf.GetScheduler();
+            IScheduler scheduler = await sf.GetScheduler();
 
-            ScheduleTestJobAndWaitForExecution(scheduler);
+            await ScheduleTestJobAndWaitForExecution(scheduler);
 
             Assert.True(listener.WasExecuted);
         }
         public class TestJob : IJob
         {
-            public void Execute(IJobExecutionContext context)
+            public async Task Execute(IJobExecutionContext context)
             {
+                await Task.FromResult(0);
             }
         }
 
         public class JobListener : IJobListener
         {
-            public void JobToBeExecuted(IJobExecutionContext context)
+            public async Task JobToBeExecuted(IJobExecutionContext context)
             {
-
+                await Task.FromResult(0);
             }
 
-            public void JobExecutionVetoed(IJobExecutionContext context)
+            public async Task JobExecutionVetoed(IJobExecutionContext context)
             {
-
+                await Task.FromResult(0);
             }
 
-            public void JobWasExecuted(IJobExecutionContext context, JobExecutionException jobException)
+            public async Task JobWasExecuted(IJobExecutionContext context, JobExecutionException jobException)
             {
                 WasExecuted = true;
+                await Task.FromResult(0);
             }
 
             public bool WasExecuted { get; private set; }

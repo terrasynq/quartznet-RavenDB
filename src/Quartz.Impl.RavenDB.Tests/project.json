@@ -1,0 +1,19 @@
+﻿{
+  "version": "1.0.0-*",
+
+  "dependencies": {
+    "Microsoft.Extensions.Logging": "1.0.0",
+    "Microsoft.Extensions.Logging.Console": "1.0.0",
+    "NETStandard.Library": "1.6.0",
+    "Quartz": "3.0.0-alpha2",
+    "Quartz.Impl.RavenDB": "1.0.0-*",
+    "RavenDB.Client": "3.5.0-rc-35169",
+    "xunit": "2.2.0-beta3-build3402"
+  },
+
+  "frameworks": {
+    "netstandard1.6": {
+      "imports": "dnxcore50"
+    }
+  }
+}

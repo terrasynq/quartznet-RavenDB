@@ -64,8 +64,8 @@
     <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\Quartz.Impl.RavenDB\Quartz.Impl.RavenDB.csproj">
-      <Project>{f17f87f5-9855-46ed-aaad-dbf163f78b02}</Project>
+    <ProjectReference Include="..\Quartz.Impl.RavenDB\Quartz.Impl.RavenDB.xproj">
+      <Project>{07fa0553-8c1b-4105-9b69-37c9abdd1cbd}</Project>
       <Name>Quartz.Impl.RavenDB</Name>
     </ProjectReference>
   </ItemGroup>

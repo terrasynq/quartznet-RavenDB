@@ -1,13 +1,13 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio 14
-VisualStudioVersion = 14.0.24720.0
+VisualStudioVersion = 14.0.25420.1
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Quartz.Impl.RavenDB", "Quartz.Impl.RavenDB\Quartz.Impl.RavenDB.csproj", "{F17F87F5-9855-46ED-AAAD-DBF163F78B02}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Quartz.Impl.RavenDB.Tests", "Quartz.Impl.RavenDB.Tests\Quartz.Impl.RavenDB.Tests.csproj", "{01FCC079-D299-4E6C-9FCA-A0D6341E8456}"
-EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Examples", "Examples\Examples.csproj", "{A34B5936-B04D-4673-8F0C-7F3583A8DA96}"
+EndProject
+Project("{8BB2217D-0F2D-49D1-97BC-3654ED321F3B}") = "Quartz.Impl.RavenDB", "Quartz.Impl.RavenDB\Quartz.Impl.RavenDB.xproj", "{07FA0553-8C1B-4105-9B69-37C9ABDD1CBD}"
+EndProject
+Project("{8BB2217D-0F2D-49D1-97BC-3654ED321F3B}") = "Quartz.Impl.RavenDB.Tests", "Quartz.Impl.RavenDB.Tests\Quartz.Impl.RavenDB.Tests.xproj", "{A70C6330-07CC-4D32-B5BA-C0A8A317E5A6}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -15,20 +15,23 @@ Global
 		Release|Any CPU = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{F17F87F5-9855-46ED-AAAD-DBF163F78B02}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{F17F87F5-9855-46ED-AAAD-DBF163F78B02}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{F17F87F5-9855-46ED-AAAD-DBF163F78B02}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{F17F87F5-9855-46ED-AAAD-DBF163F78B02}.Release|Any CPU.Build.0 = Release|Any CPU
-		{01FCC079-D299-4E6C-9FCA-A0D6341E8456}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{01FCC079-D299-4E6C-9FCA-A0D6341E8456}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{01FCC079-D299-4E6C-9FCA-A0D6341E8456}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{01FCC079-D299-4E6C-9FCA-A0D6341E8456}.Release|Any CPU.Build.0 = Release|Any CPU
 		{A34B5936-B04D-4673-8F0C-7F3583A8DA96}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{A34B5936-B04D-4673-8F0C-7F3583A8DA96}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A34B5936-B04D-4673-8F0C-7F3583A8DA96}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A34B5936-B04D-4673-8F0C-7F3583A8DA96}.Release|Any CPU.Build.0 = Release|Any CPU
+		{07FA0553-8C1B-4105-9B69-37C9ABDD1CBD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{07FA0553-8C1B-4105-9B69-37C9ABDD1CBD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{07FA0553-8C1B-4105-9B69-37C9ABDD1CBD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{07FA0553-8C1B-4105-9B69-37C9ABDD1CBD}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A70C6330-07CC-4D32-B5BA-C0A8A317E5A6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A70C6330-07CC-4D32-B5BA-C0A8A317E5A6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A70C6330-07CC-4D32-B5BA-C0A8A317E5A6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A70C6330-07CC-4D32-B5BA-C0A8A317E5A6}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(CodealikeProperties) = postSolution
+		SolutionGuid = 98acb350-e319-4169-8fe1-5f82cc02f41f
 	EndGlobalSection
 EndGlobal

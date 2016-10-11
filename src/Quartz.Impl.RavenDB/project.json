@@ -1,0 +1,21 @@
+﻿{
+  "version": "1.0.0-*",
+
+  "dependencies": {
+    "Microsoft.Extensions.Logging": "1.0.0",
+    "NETStandard.Library": "1.6.0",
+    "Quartz": "3.0.0-alpha2",
+    "RavenDB.Client": "3.5.0-rc-35169"
+  },
+
+  "frameworks": {
+    "net451": {
+    },
+    "netstandard1.6": {
+      "imports": "dnxcore50",
+      "dependencies": {
+        "runtime.any.System.Runtime": "4.1.0"
+      }
+    }
+  }
+}

@@ -3,13 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Threading;
-using System.Configuration;
-using System.Data.Common;
-using System.Runtime.CompilerServices;
 
-using Common.Logging;
-
-using Quartz.Core;
 using Quartz.Impl.Matchers;
 using Quartz.Spi;
 using Quartz.Simpl;
@@ -18,6 +12,9 @@ using Raven.Abstractions.Commands;
 using Raven.Abstractions.Data;
 using Raven.Abstractions.Extensions;
 using Raven.Client.Linq;
+using System.Threading.Tasks;
+using Raven.Client;
+using Microsoft.Extensions.Logging;
 
 namespace Quartz.Impl.RavenDB
 {
@@ -54,57 +51,46 @@ namespace Quartz.Impl.RavenDB
         public string InstanceName { get; set; }
         public int ThreadPoolSize { get; set; }
 
-        public static string defaultConnectionString = "Url=http://localhost:8080;DefaultDatabase=MyDatabaseName;ApiKey=YourKey";
         public static string Url { get; set; }
         public static string DefaultDatabase { get; set; }
         public static string ApiKey { get; set; }
-        protected ILog Log { get; }
+        private readonly ILogger _logger;
+        private readonly IDocumentStore _store;
 
-        public RavenJobStore()
+        public RavenJobStore(ILoggerFactory loggerFactory, IDocumentStore store)
         {
-            Log = LogManager.GetLogger(GetType());
-
-            var connectionStringSettings = ConfigurationManager.ConnectionStrings["quartznet-ravendb"];
-            var stringBuilder = new DbConnectionStringBuilder
-            {
-                ConnectionString = connectionStringSettings != null ?
-                    connectionStringSettings.ConnectionString :
-                    defaultConnectionString
-            };
-           
-            Url = stringBuilder["Url"] as string;
-            DefaultDatabase = stringBuilder["DefaultDatabase"] as string;
-            ApiKey = stringBuilder.ContainsKey("ApiKey") ? stringBuilder["ApiKey"] as string : null;
+            _logger = loggerFactory.CreateLogger(this.GetType().FullName);
+            _store = store;
 
             InstanceName = "UnitTestScheduler";
             InstanceId = "instance_two";
 
-
-            new TriggerIndex().Execute(DocumentStoreHolder.Store);
-            new JobIndex().Execute(DocumentStoreHolder.Store);
+            new TriggerIndex().Execute(_store);
+            new JobIndex().Execute(_store);
         }
 
         /// <summary>
         /// Called by the QuartzScheduler before the <see cref="IJobStore" /> is
         /// used, in order to give it a chance to Initialize.
         /// </summary>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public void Initialize(ITypeLoadHelper loadHelper, ISchedulerSignaler s)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task Initialize(ITypeLoadHelper loadHelper, ISchedulerSignaler s)
         {
+            await Task.FromResult(0);
             signaler = s;
         }
 
         /// <summary>
         /// Sets the schedulers's state
         /// </summary>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public void SetSchedulerState(string state)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task SetSchedulerState(string state)
         {
-            using (var session = DocumentStoreHolder.Store.OpenSession())
+            using (var session = _store.OpenAsyncSession())
             {
-                var sched = session.Load<Scheduler>(InstanceName);
+                var sched = await session.LoadAsync<Scheduler>(InstanceName);
                 sched.State = state;
-                session.SaveChanges();
+                await session.SaveChangesAsync();
             }
         }
 
@@ -112,17 +98,17 @@ namespace Quartz.Impl.RavenDB
         /// Called by the QuartzScheduler to inform the <see cref="IJobStore" /> that
         /// the scheduler has started.
         /// </summary>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public void SchedulerStarted()
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task SchedulerStarted()
         {
-            var cmds = DocumentStoreHolder.Store.DatabaseCommands;
-            var docMetaData = cmds.Head(InstanceName);
+            var cmds = _store.AsyncDatabaseCommands;
+            var docMetaData = await cmds.HeadAsync(InstanceName);
             if (docMetaData != null)
             {
                 // Scheduler with same instance name already exists, recover persistent data
                 try
                 {
-                    RecoverSchedulerData();
+                    await RecoverSchedulerData();
                 }
                 catch (SchedulerException se)
                 {
@@ -131,22 +117,22 @@ namespace Quartz.Impl.RavenDB
                 return;
             }
 
-            // If schefuler doesn't exist create new empty scheduler and store it
+            // If scheduler doesn't exist create new empty scheduler and store it
             var schedToStore = new Scheduler
             {
                 InstanceName = InstanceName,
                 LastCheckinTime = DateTimeOffset.MinValue,
                 CheckinInterval = DateTimeOffset.MinValue,
                 Calendars = new Dictionary<string, ICalendar>(),
-                PausedJobGroups = new Collection.HashSet<string>(),
-                BlockedJobs = new Collection.HashSet<string>(),
+                PausedJobGroups = new HashSet<string>(),
+                BlockedJobs = new HashSet<string>(),
                 State = "Started"
             };
 
-            using (var session = DocumentStoreHolder.Store.OpenSession())
+            using (var session = _store.OpenAsyncSession())
             {
-                session.Store(schedToStore, InstanceName);
-                session.SaveChanges();
+                await session.StoreAsync(schedToStore, InstanceName);
+                await session.SaveChangesAsync();
             }            
         }
 
@@ -154,20 +140,20 @@ namespace Quartz.Impl.RavenDB
         /// Called by the QuartzScheduler to inform the JobStore that
         /// the scheduler has been paused.
         /// </summary>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public void SchedulerPaused()
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task SchedulerPaused()
         {
-            SetSchedulerState("Paused");
+            await SetSchedulerState("Paused");
         }
 
         /// <summary>
         /// Called by the QuartzScheduler to inform the JobStore that
         /// the scheduler has resumed after being paused.
         /// </summary>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public void SchedulerResumed()
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task SchedulerResumed()
         {
-            SetSchedulerState("Resumed");
+            await SetSchedulerState("Resumed");
         }
 
         /// <summary>
@@ -175,10 +161,10 @@ namespace Quartz.Impl.RavenDB
         /// it should free up all of it's resources because the scheduler is
         /// shutting down.
         /// </summary>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public void Shutdown()
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task Shutdown()
         {
-            SetSchedulerState("Shutdown");
+            await SetSchedulerState("Shutdown");
         }
 
         /// <summary>
@@ -186,60 +172,60 @@ namespace Quartz.Impl.RavenDB
         /// appropriate.
         /// </summary>
         /// <exception cref="JobPersistenceException">Condition.</exception>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        protected virtual void RecoverSchedulerData()
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        protected virtual async Task RecoverSchedulerData()
         {
             try
             {
-                Log.Info("Trying to recover persisted scheduler data for" + InstanceName);
+                _logger.LogInformation("Trying to recover persisted scheduler data for" + InstanceName);
 
                 // update inconsistent states
-                using (var session = DocumentStoreHolder.Store.OpenSession())
+                using (var session = _store.OpenAsyncSession())
                 {
                     var queryResult = session.Query<Trigger>()
                         .Where(t => (t.Scheduler == InstanceName) && (t.State == InternalTriggerState.Acquired || t.State == InternalTriggerState.Blocked));
                     foreach (var trigger in queryResult)
                     {
-                        var triggerToUpdate = session.Load<Trigger>(trigger.Key);
+                        var triggerToUpdate = await session.LoadAsync<Trigger>(trigger.Key);
                         triggerToUpdate.State = InternalTriggerState.Waiting;
                     }
-                    session.SaveChanges();
+                    await session.SaveChangesAsync();
                 }
 
-                Log.Info("Freed triggers from 'acquired' / 'blocked' state.");
+                _logger.LogInformation("Freed triggers from 'acquired' / 'blocked' state.");
                 
                 // recover jobs marked for recovery that were not fully executed
                 IList<IOperableTrigger> recoveringJobTriggers = new List<IOperableTrigger>();
 
-                using (var session = DocumentStoreHolder.Store.OpenSession())
+                using (var session = _store.OpenAsyncSession())
                 {
                     var queryResultJobs = session.Query<Job>()
                         .Where(j => (j.Scheduler == InstanceName) && j.RequestsRecovery);
 
                     foreach (var job in queryResultJobs)
                     {
-                        recoveringJobTriggers.AddRange(GetTriggersForJob(new JobKey(job.Name, job.Group)));
+                        recoveringJobTriggers.AddRange(await GetTriggersForJob(new JobKey(job.Name, job.Group)));
                     }
                 }
 
-                Log.Info("Recovering " + recoveringJobTriggers.Count +
+                _logger.LogInformation("Recovering " + recoveringJobTriggers.Count +
                          " jobs that were in-progress at the time of the last shut-down.");
 
                 foreach (IOperableTrigger trigger in recoveringJobTriggers)
                 {
-                    if (CheckExists(trigger.JobKey))
+                    if (await CheckExists(trigger.JobKey))
                     {
                         trigger.ComputeFirstFireTimeUtc(null);
-                        StoreTrigger(trigger, true);
+                        await StoreTrigger(trigger, true);
                     }
                 }
-                Log.Info("Recovery complete.");
+                _logger.LogInformation("Recovery complete.");
 
                 // remove lingering 'complete' triggers...
-                Log.Info("Removing 'complete' triggers...");
+                _logger.LogInformation("Removing 'complete' triggers...");
                 IRavenQueryable<Trigger> triggersInStateComplete;
 
-                using (var session = DocumentStoreHolder.Store.OpenSession())
+                using (var session = _store.OpenAsyncSession())
                 {
                     triggersInStateComplete = session.Query<Trigger>()
                         .Where(t => (t.Scheduler == InstanceName) && (t.State == InternalTriggerState.Complete));
@@ -247,15 +233,15 @@ namespace Quartz.Impl.RavenDB
 
                 foreach (var trigger in triggersInStateComplete)
                 {
-                    RemoveTrigger(new TriggerKey(trigger.Name, trigger.Group));
+                    await RemoveTrigger(new TriggerKey(trigger.Name, trigger.Group));
                 }
 
-                using (var session = DocumentStoreHolder.Store.OpenSession())
+                using (var session = _store.OpenAsyncSession())
                 {
 
-                    var schedToUpdate = session.Load<Scheduler>(InstanceName);
+                    var schedToUpdate = await session.LoadAsync<Scheduler>(InstanceName);
                     schedToUpdate.State = "Started";
-                    session.SaveChanges();
+                    await session.SaveChangesAsync();
                 }
             }
             catch (Exception e)
@@ -268,7 +254,7 @@ namespace Quartz.Impl.RavenDB
         /// Gets the fired trigger record id.
         /// </summary>
         /// <returns>The fired trigger record id.</returns>
-        [MethodImpl(MethodImplOptions.Synchronized)]
+        //[MethodImpl(MethodImplOptions.Synchronized)]
         protected virtual string GetFiredTriggerRecordId()
         {
             var value = Interlocked.Increment(ref ftrCtr);
@@ -280,11 +266,11 @@ namespace Quartz.Impl.RavenDB
         /// </summary>
         /// <param name="newJob">The <see cref="IJobDetail" /> to be stored.</param>
         /// <param name="newTrigger">The <see cref="ITrigger" /> to be stored.</param>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public void StoreJobAndTrigger(IJobDetail newJob, IOperableTrigger newTrigger)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task StoreJobAndTrigger(IJobDetail newJob, IOperableTrigger newTrigger)
         {
-            StoreJob(newJob, true);
-            StoreTrigger(newTrigger, true);
+            await StoreJob(newJob, true);
+            await StoreTrigger(newTrigger, true);
         }
 
         /// <summary>
@@ -292,12 +278,12 @@ namespace Quartz.Impl.RavenDB
         /// </summary>
         /// <param name="groupName"></param>
         /// <returns></returns>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public bool IsJobGroupPaused(string groupName)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task<bool> IsJobGroupPaused(string groupName)
         {
-            using (var session = DocumentStoreHolder.Store.OpenSession())
+            using (var session = _store.OpenAsyncSession())
             {
-                var sched = session.Load<Scheduler>(InstanceName);
+                var sched = await session.LoadAsync<Scheduler>(InstanceName);
                 return sched.PausedJobGroups.Contains(groupName);
             }
         }
@@ -308,10 +294,10 @@ namespace Quartz.Impl.RavenDB
         /// </summary>
         /// <param name="groupName"></param>
         /// <returns></returns>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public bool IsTriggerGroupPaused(string groupName)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task<bool> IsTriggerGroupPaused(string groupName)
         {
-            return GetPausedTriggerGroups().Contains(groupName);
+            return (await GetPausedTriggerGroups()).Contains(groupName);
 
         }
 
@@ -324,10 +310,10 @@ namespace Quartz.Impl.RavenDB
         /// <see cref="IJobStore" /> with the same name and group should be
         /// over-written.
         /// </param>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public void StoreJob(IJobDetail newJob, bool replaceExisting)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task StoreJob(IJobDetail newJob, bool replaceExisting)
         {
-            if (CheckExists(newJob.Key))
+            if (await CheckExists(newJob.Key))
             {
                 if (!replaceExisting)
                 {
@@ -337,18 +323,18 @@ namespace Quartz.Impl.RavenDB
 
             var job = new Job(newJob, InstanceName);
 
-            using (var session = DocumentStoreHolder.Store.OpenSession())
+            using (var session = _store.OpenAsyncSession())
             {
                 // Store() overwrites if job id already exists
-                session.Store(job, job.Key);
-                session.SaveChanges();
+                await session.StoreAsync(job, job.Key);
+                await session.SaveChangesAsync();
             }
         }
 
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public void StoreJobsAndTriggers(IDictionary<IJobDetail, Collection.ISet<ITrigger>> triggersAndJobs, bool replace)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task StoreJobsAndTriggers(IDictionary<IJobDetail, ISet<ITrigger>> triggersAndJobs, bool replace)
         {
-            using (var bulkInsert = DocumentStoreHolder.Store.BulkInsert(options: new BulkInsertOptions() { OverwriteExisting = replace }))
+            using (var bulkInsert = _store.BulkInsert(options: new BulkInsertOptions() { OverwriteExisting = replace }))
             {
                 foreach (var pair in triggersAndJobs)
                 {
@@ -365,15 +351,15 @@ namespace Quartz.Impl.RavenDB
                         }
                         var trigger = new Trigger(operTrig, InstanceName);
 
-                        if (GetPausedTriggerGroups().Contains(operTrig.Key.Group) || GetPausedJobGroups().Contains(operTrig.JobKey.Group))
+                        if ((await GetPausedTriggerGroups()).Contains(operTrig.Key.Group) || (await GetPausedJobGroups()).Contains(operTrig.JobKey.Group))
                         {
                             trigger.State = InternalTriggerState.Paused;
-                            if (GetBlockedJobs().Contains(operTrig.JobKey.Name + "/" + operTrig.JobKey.Group))
+                            if ((await GetBlockedJobs()).Contains(operTrig.JobKey.Name + "/" + operTrig.JobKey.Group))
                             {
                                 trigger.State = InternalTriggerState.PausedAndBlocked;
                             }
                         }
-                        else if (GetBlockedJobs().Contains(operTrig.JobKey.Name + "/" + operTrig.JobKey.Group))
+                        else if ((await GetBlockedJobs()).Contains(operTrig.JobKey.Name + "/" + operTrig.JobKey.Group))
                         {
                             trigger.State = InternalTriggerState.Blocked;
                         }
@@ -382,7 +368,7 @@ namespace Quartz.Impl.RavenDB
                     }
                 }
             } // bulkInsert is disposed - same effect as session.SaveChanges()
-
+            await Task.FromResult(0);
         }
 
         /// <summary>
@@ -394,12 +380,12 @@ namespace Quartz.Impl.RavenDB
         /// 	<see langword="true" /> if a <see cref="IJob" /> with the given name and
         /// group was found and removed from the store.
         /// </returns>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public bool RemoveJob(JobKey jobKey)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task<bool> RemoveJob(JobKey jobKey)
         {
-            using (var session = DocumentStoreHolder.Store.OpenSession())
+            using (var session = _store.OpenAsyncSession())
             {
-                if (!CheckExists(jobKey))
+                if (!await CheckExists(jobKey))
                 {
                     return false;
                 }
@@ -408,19 +394,19 @@ namespace Quartz.Impl.RavenDB
                 {
                     Key = jobKey.Name + "/" + jobKey.Group
                 });
-                session.SaveChanges();
+                await session.SaveChangesAsync();
             }
             return true;
         }
 
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public bool RemoveJobs(IList<JobKey> jobKeys)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task<bool> RemoveJobs(IList<JobKey> jobKeys)
         {
             // Returns false in case at least one job removal fails
             var result = true;
             foreach (var key in jobKeys)
             {
-                result &= RemoveJob(key);
+                result &= await RemoveJob(key);
             }
             return result;
         }
@@ -432,12 +418,12 @@ namespace Quartz.Impl.RavenDB
         /// <returns>
         /// The desired <see cref="IJob" />, or null if there is no match.
         /// </returns>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public IJobDetail RetrieveJob(JobKey jobKey)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task<IJobDetail> RetrieveJob(JobKey jobKey)
         {
-            using (var session = DocumentStoreHolder.Store.OpenSession())
+            using (var session = _store.OpenAsyncSession())
             {
-                var job = session.Load<Job>(jobKey.Name + "/" + jobKey.Group);
+                var job = await session.LoadAsync<Job>(jobKey.Name + "/" + jobKey.Group);
 
                 return job?.Deserialize();
             }
@@ -451,10 +437,10 @@ namespace Quartz.Impl.RavenDB
         /// the <see cref="IJobStore" /> with the same name and group should
         /// be over-written.</param>
         /// <throws>  ObjectAlreadyExistsException </throws>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public void StoreTrigger(IOperableTrigger newTrigger, bool replaceExisting)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task StoreTrigger(IOperableTrigger newTrigger, bool replaceExisting)
         {
-            if (CheckExists(newTrigger.Key))
+            if (await CheckExists(newTrigger.Key))
             {
                 if (!replaceExisting)
                 {
@@ -462,7 +448,7 @@ namespace Quartz.Impl.RavenDB
                 }
             }
 
-            if (!CheckExists(newTrigger.JobKey))
+            if (!await CheckExists(newTrigger.JobKey))
             {
                 throw new JobPersistenceException("The job (" + newTrigger.JobKey + ") referenced by the trigger does not exist.");
             }
@@ -470,24 +456,24 @@ namespace Quartz.Impl.RavenDB
             var trigger = new Trigger(newTrigger, InstanceName);
 
             // make sure trigger group is not paused and that job is not blocked
-            if (GetPausedTriggerGroups().Contains(newTrigger.Key.Group) || GetPausedJobGroups().Contains(newTrigger.JobKey.Group))
+            if ((await GetPausedTriggerGroups()).Contains(newTrigger.Key.Group) || (await GetPausedJobGroups()).Contains(newTrigger.JobKey.Group))
             {
                 trigger.State = InternalTriggerState.Paused;
-                if (GetBlockedJobs().Contains(newTrigger.JobKey.Name + "/" + newTrigger.JobKey.Group))
+                if ((await GetBlockedJobs()).Contains(newTrigger.JobKey.Name + "/" + newTrigger.JobKey.Group))
                 {
                     trigger.State = InternalTriggerState.PausedAndBlocked;
                 }
             }
-            else if (GetBlockedJobs().Contains(newTrigger.JobKey.Name + "/" + newTrigger.JobKey.Group))
+            else if ((await GetBlockedJobs()).Contains(newTrigger.JobKey.Name + "/" + newTrigger.JobKey.Group))
             {
                 trigger.State = InternalTriggerState.Blocked;
             }
 
-            using (var session = DocumentStoreHolder.Store.OpenSession())
+            using (var session = _store.OpenAsyncSession())
             {
                 // Overwrite if exists
-                session.Store(trigger, trigger.Key);
-                session.SaveChanges();
+                await session.StoreAsync(trigger, trigger.Key);
+                await session.SaveChangesAsync();
             }
         }
 
@@ -505,46 +491,46 @@ namespace Quartz.Impl.RavenDB
         /// <see langword="true" /> if a <see cref="ITrigger" /> with the given
         /// name and group was found and removed from the store.
         /// </returns>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public bool RemoveTrigger(TriggerKey triggerKey)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task<bool> RemoveTrigger(TriggerKey triggerKey)
         {
-            if (!CheckExists(triggerKey))
+            if (!await CheckExists(triggerKey))
             {
                 return false;
             }
-            using (var session = DocumentStoreHolder.Store.OpenSession())
+            using (var session = _store.OpenAsyncSession())
             {
-                var trigger = session.Load<Trigger>(triggerKey.Name + "/" + triggerKey.Group);
-                var job = RetrieveJob(new JobKey(trigger.JobName, trigger.Group));
+                var trigger = await session.LoadAsync<Trigger>(triggerKey.Name + "/" + triggerKey.Group);
+                var job = await RetrieveJob(new JobKey(trigger.JobName, trigger.Group));
 
                 // Delete trigger
                 session.Advanced.Defer(new DeleteCommandData
                 {
                     Key = triggerKey.Name + "/" + triggerKey.Group
                 });
-                session.SaveChanges();
+                await session.SaveChangesAsync();
 
                 // Remove the trigger's job if it is not associated with any other triggers
-                var trigList = GetTriggersForJob(job.Key);
+                var trigList = await GetTriggersForJob(job.Key);
                 if ((trigList == null || trigList.Count == 0) && !job.Durable)
                 {
-                    if (RemoveJob(job.Key))
+                    if (await RemoveJob(job.Key))
                     {
-                        signaler.NotifySchedulerListenersJobDeleted(job.Key);
+                        await signaler.NotifySchedulerListenersJobDeleted(job.Key);
                     }
                 }
             }
             return true;
         }
 
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public bool RemoveTriggers(IList<TriggerKey> triggerKeys)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task<bool> RemoveTriggers(IList<TriggerKey> triggerKeys)
         {
             // Returns false in case at least one trigger removal fails
             var result = true;
             foreach (var key in triggerKeys)
             {
-                result &= RemoveTrigger(key);
+                result &= await RemoveTrigger(key);
             }
             return result;
         }
@@ -560,17 +546,17 @@ namespace Quartz.Impl.RavenDB
         /// 	<see langword="true" /> if a <see cref="ITrigger" /> with the given
         /// name and group was found and removed from the store.
         /// </returns>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public bool ReplaceTrigger(TriggerKey triggerKey, IOperableTrigger newTrigger)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task<bool> ReplaceTrigger(TriggerKey triggerKey, IOperableTrigger newTrigger)
         {
-            if (!CheckExists(triggerKey))
+            if (!await CheckExists(triggerKey))
             {
                 return false;
             }
-            var wasRemoved = RemoveTrigger(triggerKey);
+            var wasRemoved = await RemoveTrigger(triggerKey);
             if (wasRemoved)
             {
-                StoreTrigger(newTrigger, true);
+                await StoreTrigger(newTrigger, true);
             }
             return wasRemoved;
         }
@@ -582,17 +568,17 @@ namespace Quartz.Impl.RavenDB
         /// The desired <see cref="ITrigger" />, or null if there is no
         /// match.
         /// </returns>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public IOperableTrigger RetrieveTrigger(TriggerKey triggerKey)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task<IOperableTrigger> RetrieveTrigger(TriggerKey triggerKey)
         {
-            if (!CheckExists(triggerKey))
+            if (!await CheckExists(triggerKey))
             {
                 return null;
             }
 
-            using (var session = DocumentStoreHolder.Store.OpenSession())
+            using (var session = _store.OpenAsyncSession())
             {
-                var trigger = session.Load<Trigger>(triggerKey.Name + "/" + triggerKey.Group);
+                var trigger = await session.LoadAsync<Trigger>(triggerKey.Name + "/" + triggerKey.Group);
 
                 return trigger?.Deserialize();
             }
@@ -606,13 +592,13 @@ namespace Quartz.Impl.RavenDB
         /// </remarks>
         /// <param name="calName">the identifier to check for</param>
         /// <returns>true if a calendar exists with the given identifier</returns>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public bool CalendarExists(string calName)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task<bool> CalendarExists(string calName)
         {
             bool answer;
-            using (var session = DocumentStoreHolder.Store.OpenSession())
+            using (var session = _store.OpenAsyncSession())
             {
-                var sched = session.Load<Scheduler>(InstanceName);
+                var sched = await session.LoadAsync<Scheduler>(InstanceName);
                 if (sched == null) return false;
                 try
                 {
@@ -620,7 +606,7 @@ namespace Quartz.Impl.RavenDB
                 }
                 catch (ArgumentNullException argumentNullException)
                 {
-                    Log.Error("Calendars collection is null.", argumentNullException);
+                    _logger.LogError("Calendars collection is null.", argumentNullException);
                     answer = false;
                 }
             }
@@ -635,11 +621,11 @@ namespace Quartz.Impl.RavenDB
         /// </remarks>
         /// <param name="jobKey">the identifier to check for</param>
         /// <returns>true if a job exists with the given identifier</returns>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public bool CheckExists(JobKey jobKey)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task<bool> CheckExists(JobKey jobKey)
         {
-            var cmds = DocumentStoreHolder.Store.DatabaseCommands;
-            var docMetaData = cmds.Head(jobKey.Name + "/" + jobKey.Group);
+            var cmds = _store.AsyncDatabaseCommands;
+            var docMetaData = await cmds.HeadAsync(jobKey.Name + "/" + jobKey.Group);
             return docMetaData != null;
         }
 
@@ -651,11 +637,11 @@ namespace Quartz.Impl.RavenDB
         /// </remarks>
         /// <param name="triggerKey">the identifier to check for</param>
         /// <returns>true if a trigger exists with the given identifier</returns>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public bool CheckExists(TriggerKey triggerKey)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task<bool> CheckExists(TriggerKey triggerKey)
         {
-            var cmds = DocumentStoreHolder.Store.DatabaseCommands;
-            var docMetaData = cmds.Head(triggerKey.Name + "/" + triggerKey.Group);
+            var cmds = _store.AsyncDatabaseCommands;
+            var docMetaData = await cmds.HeadAsync(triggerKey.Name + "/" + triggerKey.Group);
             return docMetaData != null;
         }
 
@@ -665,11 +651,10 @@ namespace Quartz.Impl.RavenDB
         /// </summary>
         /// <remarks>
         /// </remarks>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public void ClearAllSchedulingData()
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task ClearAllSchedulingData()
         {
-            var op = DocumentStoreHolder.Store.DatabaseCommands.DeleteByIndex("Raven/DocumentsByEntityName", new IndexQuery(), new BulkOperationOptions() { AllowStale = true });
-            op.WaitForCompletion();
+            await _store.AsyncDatabaseCommands.DeleteByIndexAsync("Raven/DocumentsByEntityName", new IndexQuery(), new BulkOperationOptions() { AllowStale = true });
         }
 
         /// <summary>
@@ -681,21 +666,21 @@ namespace Quartz.Impl.RavenDB
         /// <param name="calendar">the name of the calendar</param>
         /// <param name="replaceExisting">should replace existing calendar</param>
         /// <param name="updateTriggers">should update triggers</param>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public void StoreCalendar(string name, ICalendar calendar, bool replaceExisting, bool updateTriggers)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task StoreCalendar(string name, ICalendar calendar, bool replaceExisting, bool updateTriggers)
         {
             var calendarCopy = (ICalendar)calendar.Clone();
 
-            using (var session = DocumentStoreHolder.Store.OpenSession())
+            using (var session = _store.OpenAsyncSession())
             {
-                var sched = session.Load<Scheduler>(InstanceName);
+                var sched = await session.LoadAsync<Scheduler>(InstanceName);
 
                 if (sched?.Calendars == null)
                 {
                     throw new NullReferenceException(string.Format(CultureInfo.InvariantCulture, "Scheduler with instance name '{0}' is null", InstanceName));
                 }
 
-                if (CalendarExists(name) && !replaceExisting)
+                if (await CalendarExists(name) && !replaceExisting)
                 {
                     throw new ObjectAlreadyExistsException(string.Format(CultureInfo.InvariantCulture, "Calendar with name '{0}' already exists.", name));
                 }
@@ -708,27 +693,27 @@ namespace Quartz.Impl.RavenDB
                     return;
                 }
 
-                var triggersKeysToUpdate = session
+                var triggersKeysToUpdate = await session
                     .Query<Trigger>()
                     .Where(t => t.CalendarName == name)
                     .Select(t => t.Key)
-                    .ToList();
+                    .ToListAsync();
 
                 if (triggersKeysToUpdate.Count == 0)
                 {
-                    session.SaveChanges();
+                    await session.SaveChangesAsync();
                     return;
                 }
 
                 foreach (var triggerKey in triggersKeysToUpdate)
                 {
-                    var triggerToUpdate = session.Load<Trigger>(triggerKey);
+                    var triggerToUpdate = await session.LoadAsync<Trigger>(triggerKey);
                     var trigger = triggerToUpdate.Deserialize();
                     trigger.UpdateWithNewCalendar(calendarCopy, misfireThreshold);
                     triggerToUpdate.UpdateFireTimes(trigger);
 
                 }
-                session.SaveChanges();
+                await session.SaveChangesAsync();
             }
         }
 
@@ -746,21 +731,21 @@ namespace Quartz.Impl.RavenDB
         /// <see langword="true" /> if a <see cref="ICalendar" /> with the given name
         /// was found and removed from the store.
         /// </returns>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public bool RemoveCalendar(string calName)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task<bool> RemoveCalendar(string calName)
         {
-            if (RetrieveCalendar(calName) == null)
+            if (await RetrieveCalendar(calName) == null)
             {
                 return false;
             }
-            var calCollection = RetrieveCalendarCollection();
+            var calCollection = await RetrieveCalendarCollection();
             calCollection.Remove(calName);
 
-            using (var session = DocumentStoreHolder.Store.OpenSession())
+            using (var session = _store.OpenAsyncSession())
             {
-                var sched = session.Load<Scheduler>(InstanceName);
+                var sched = await session.LoadAsync<Scheduler>(InstanceName);
                 sched.Calendars = calCollection;
-                session.SaveChanges();
+                await session.SaveChangesAsync();
             }
             return true;
         }
@@ -773,10 +758,10 @@ namespace Quartz.Impl.RavenDB
         /// The desired <see cref="ICalendar" />, or null if there is no
         /// match.
         /// </returns>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public ICalendar RetrieveCalendar(string calName)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task<ICalendar> RetrieveCalendar(string calName)
         {
-            var callCollection = RetrieveCalendarCollection();
+            var callCollection = await RetrieveCalendarCollection();
             return callCollection.ContainsKey(calName) ? callCollection[calName] : null;
         }
 
@@ -785,12 +770,12 @@ namespace Quartz.Impl.RavenDB
         /// stored in the <see cref="IJobStore" />.
         /// </summary>
         /// <returns></returns>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public Dictionary<string, ICalendar> RetrieveCalendarCollection()
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task<Dictionary<string, ICalendar>> RetrieveCalendarCollection()
         {
-            using (var session = DocumentStoreHolder.Store.OpenSession())
+            using (var session = _store.OpenAsyncSession())
             {
-                var sched = session.Load<Scheduler>(InstanceName);
+                var sched = await session.LoadAsync<Scheduler>(InstanceName);
                 if (sched == null)
                 {
                     throw new NullReferenceException(string.Format(CultureInfo.InvariantCulture, "Scheduler with instance name '{0}' is null", InstanceName));
@@ -808,12 +793,12 @@ namespace Quartz.Impl.RavenDB
         /// stored in the <see cref="IJobStore" />.
         /// </summary>
         /// <returns></returns>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public int GetNumberOfJobs()
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task<int> GetNumberOfJobs()
         {
-            using (var session = DocumentStoreHolder.Store.OpenSession())
+            using (var session = _store.OpenAsyncSession())
             {
-                return session.Query<Job>().Count();
+                return await session.Query<Job>().CountAsync();
             }
         }
 
@@ -822,12 +807,12 @@ namespace Quartz.Impl.RavenDB
         /// stored in the <see cref="IJobStore" />.
         /// </summary>
         /// <returns></returns>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public int GetNumberOfTriggers()
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task<int> GetNumberOfTriggers()
         {
-            using (var session = DocumentStoreHolder.Store.OpenSession())
+            using (var session = _store.OpenAsyncSession())
             {
-                return session.Query<Trigger>().Count();
+                return await session.Query<Trigger>().CountAsync();
             }
         }
 
@@ -836,10 +821,10 @@ namespace Quartz.Impl.RavenDB
         /// stored in the <see cref="IJobStore" />.
         /// </summary>
         /// <returns></returns>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public int GetNumberOfCalendars()
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task<int> GetNumberOfCalendars()
         {
-            return RetrieveCalendarCollection().Count;
+            return (await RetrieveCalendarCollection()).Count;
         }
 
         /// <summary>
@@ -852,17 +837,17 @@ namespace Quartz.Impl.RavenDB
         /// </summary>
         /// <param name="matcher"></param>
         /// <returns></returns>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public Collection.ISet<JobKey> GetJobKeys(GroupMatcher<JobKey> matcher)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task<ISet<JobKey>> GetJobKeys(GroupMatcher<JobKey> matcher)
         {
             StringOperator op = matcher.CompareWithOperator;
             string compareToValue = matcher.CompareToValue;
 
-            var result = new Collection.HashSet<JobKey>();
+            var result = new HashSet<JobKey>();
 
-            using (var session = DocumentStoreHolder.Store.OpenSession())
+            using (var session = _store.OpenAsyncSession())
             {
-                var allJobs = session.Query<Job>();
+                var allJobs = await session.Query<Job>().ToListAsync();
 
                 foreach (var job in allJobs)
                 {
@@ -883,17 +868,17 @@ namespace Quartz.Impl.RavenDB
         /// zero-length array (not <see langword="null" />).
         /// </para>
         /// </summary>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public Collection.ISet<TriggerKey> GetTriggerKeys(GroupMatcher<TriggerKey> matcher)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task<ISet<TriggerKey>> GetTriggerKeys(GroupMatcher<TriggerKey> matcher)
         {
             StringOperator op = matcher.CompareWithOperator;
             string compareToValue = matcher.CompareToValue;
 
-            var result = new Collection.HashSet<TriggerKey>();
+            var result = new HashSet<TriggerKey>();
 
-            using (var session = DocumentStoreHolder.Store.OpenSession())
+            using (var session = _store.OpenAsyncSession())
             {
-                var allTriggers = session.Query<Trigger>();
+                var allTriggers = await session.Query<Trigger>().ToListAsync();
 
                 foreach (var trigger in allTriggers)
                 {
@@ -914,15 +899,15 @@ namespace Quartz.Impl.RavenDB
         /// array (not <see langword="null" />).
         /// </para>
         /// </summary>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public IList<string> GetJobGroupNames()
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task<IReadOnlyList<string>> GetJobGroupNames()
         {
-            using (var session = DocumentStoreHolder.Store.OpenSession())
+            using (var session = _store.OpenAsyncSession())
             {
-                return session.Query<Job>()
+                return (await session.Query<Job>()
                     .Select(j => j.Group)
                     .Distinct()
-                    .ToList();
+                    .ToListAsync()).ToList();
             }
         }
 
@@ -934,18 +919,18 @@ namespace Quartz.Impl.RavenDB
         /// array (not <see langword="null" />).
         /// </para>
         /// </summary>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public IList<string> GetTriggerGroupNames()
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task<IReadOnlyList<string>> GetTriggerGroupNames()
         {
-            using (var session = DocumentStoreHolder.Store.OpenSession())
+            using (var session = _store.OpenAsyncSession())
             {
                 try
                 {
-                    var result = session.Query<Trigger>()
+                    var result = await session.Query<Trigger>()
                         .Select(t => t.Group)
                         .Distinct()
-                        .ToList();
-                    return result;
+                        .ToListAsync();
+                    return result.ToList();
                 }
                 catch (ArgumentNullException)
                 {
@@ -962,10 +947,10 @@ namespace Quartz.Impl.RavenDB
         /// a zero-length array (not <see langword="null" />).
         /// </para>
         /// </summary>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public IList<string> GetCalendarNames()
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task<IReadOnlyList<string>> GetCalendarNames()
         {
-            return RetrieveCalendarCollection().Keys.ToList();
+            return (await RetrieveCalendarCollection()).Keys.ToList();
         }
 
         /// <summary>
@@ -974,17 +959,17 @@ namespace Quartz.Impl.RavenDB
         /// <remarks>
         /// If there are no matches, a zero-length array should be returned.
         /// </remarks>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public IList<IOperableTrigger> GetTriggersForJob(JobKey jobKey)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task<IReadOnlyList<IOperableTrigger>> GetTriggersForJob(JobKey jobKey)
         {
-            using (var session = DocumentStoreHolder.Store.OpenSession())
+            using (var session = _store.OpenAsyncSession())
             {
                 try
                 {
-                    var result = session
+                    var result = (await session
                         .Query<Trigger>()
                         .Where(t => Equals(t.JobName, jobKey.Name) && Equals(t.Group, jobKey.Group))
-                        .ToList()
+                        .ToListAsync())
                         .Select(trigger => trigger.Deserialize()).ToList();
                     return result;
                 }
@@ -999,13 +984,13 @@ namespace Quartz.Impl.RavenDB
         /// Get the current state of the identified <see cref="ITrigger" />.
         /// </summary>
         /// <seealso cref="TriggerState" />
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public TriggerState GetTriggerState(TriggerKey triggerKey)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task<TriggerState> GetTriggerState(TriggerKey triggerKey)
         {
             Trigger trigger;
-            using (var session = DocumentStoreHolder.Store.OpenSession())
+            using (var session = _store.OpenAsyncSession())
             {
-                trigger = session.Load<Trigger>(triggerKey.Name + "/" + triggerKey.Group);
+                trigger = await session.LoadAsync<Trigger>(triggerKey.Name + "/" + triggerKey.Group);
             }
 
             if (trigger == null)
@@ -1033,17 +1018,17 @@ namespace Quartz.Impl.RavenDB
         /// <summary>
         /// Pause the <see cref="ITrigger" /> with the given key.
         /// </summary>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public void PauseTrigger(TriggerKey triggerKey)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task PauseTrigger(TriggerKey triggerKey)
         {
-            if (!CheckExists(triggerKey))
+            if (!await CheckExists(triggerKey))
             {
                 return;
             }
 
-            using (var session = DocumentStoreHolder.Store.OpenSession())
+            using (var session = _store.OpenAsyncSession())
             {
-                var trig = session.Load<Trigger>(triggerKey.Name + "/" + triggerKey.Group);
+                var trig = await session.LoadAsync<Trigger>(triggerKey.Name + "/" + triggerKey.Group);
 
                 // if the trigger doesn't exist or is "complete" pausing it does not make sense...
                 if (trig == null)
@@ -1056,7 +1041,7 @@ namespace Quartz.Impl.RavenDB
                 }
 
                 trig.State = trig.State == InternalTriggerState.Blocked ? InternalTriggerState.PausedAndBlocked : InternalTriggerState.Paused;
-                session.SaveChanges();
+                await session.SaveChangesAsync();
             }
         }
 
@@ -1069,31 +1054,31 @@ namespace Quartz.Impl.RavenDB
         /// pause on any new triggers that are added to the group while the group is
         /// paused.
         /// </remarks>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public Collection.ISet<string> PauseTriggers(GroupMatcher<TriggerKey> matcher)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task<ISet<string>> PauseTriggers(GroupMatcher<TriggerKey> matcher)
         {
             var pausedGroups = new HashSet<string>();
 
-            var triggerKeysForMatchedGroup = GetTriggerKeys(matcher);
+            var triggerKeysForMatchedGroup = await GetTriggerKeys(matcher);
             foreach (var triggerKey in triggerKeysForMatchedGroup)
             {
-                PauseTrigger(triggerKey);
+                await PauseTrigger(triggerKey);
                 pausedGroups.Add(triggerKey.Group);
             }
-            return new Collection.HashSet<string>(pausedGroups);
+            return new HashSet<string>(pausedGroups);
         }
 
         /// <summary>
         /// Pause the <see cref="IJob" /> with the given key - by
         /// pausing all of its current <see cref="ITrigger" />s.
         /// </summary>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public void PauseJob(JobKey jobKey)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task PauseJob(JobKey jobKey)
         {
-            IList<IOperableTrigger> triggersForJob = GetTriggersForJob(jobKey);
-            foreach (IOperableTrigger trigger in triggersForJob)
+            var triggersForJob = await GetTriggersForJob(jobKey);
+            foreach (var trigger in triggersForJob)
             {
-                PauseTrigger(trigger.Key);
+                await PauseTrigger(trigger.Key);
             }
         }
 
@@ -1108,23 +1093,23 @@ namespace Quartz.Impl.RavenDB
         /// </summary>
         /// <seealso cref="string">
         /// </seealso>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public IList<string> PauseJobs(GroupMatcher<JobKey> matcher)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task<IReadOnlyList<string>> PauseJobs(GroupMatcher<JobKey> matcher)
         {
 
             var pausedGroups = new List<string>();
 
-            var jobKeysForMatchedGroup = GetJobKeys(matcher);
+            var jobKeysForMatchedGroup = await GetJobKeys(matcher);
             foreach (var jobKey in jobKeysForMatchedGroup)
             {
-                PauseJob(jobKey);
+                await PauseJob(jobKey);
                 pausedGroups.Add(jobKey.Group);
 
-                using (var session = DocumentStoreHolder.Store.OpenSession())
+                using (var session = _store.OpenAsyncSession())
                 {
-                    var sched = session.Load<Scheduler>(InstanceName);
+                    var sched = await session.LoadAsync<Scheduler>(InstanceName);
                     sched.PausedJobGroups.Add(matcher.CompareToValue);
-                    session.SaveChanges();
+                    await session.SaveChangesAsync();
                 }
             }
 
@@ -1132,7 +1117,7 @@ namespace Quartz.Impl.RavenDB
         }
 
         /// <summary>
-        /// Resume (un-pause) the <see cref="ITrigger" /> with the
+        /// Resume the <see cref="ITrigger" /> with the
         /// given key.
         /// 
         /// <para>
@@ -1142,16 +1127,16 @@ namespace Quartz.Impl.RavenDB
         /// </summary>
         /// <seealso cref="string">
         /// </seealso>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public void ResumeTrigger(TriggerKey triggerKey)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task ResumeTrigger(TriggerKey triggerKey)
         {
-            if (!CheckExists(triggerKey))
+            if (!await CheckExists(triggerKey))
             {
                 return;
             }
-            using (var session = DocumentStoreHolder.Store.OpenSession())
+            using (var session = _store.OpenAsyncSession())
             {
-                var trigger = session.Load<Trigger>(triggerKey.Name + "/" + triggerKey.Group);
+                var trigger = await session.LoadAsync<Trigger>(triggerKey.Name + "/" + triggerKey.Group);
 
                 // if the trigger is not paused resuming it does not make sense...
                 if (trigger.State != InternalTriggerState.Paused &&
@@ -1160,31 +1145,31 @@ namespace Quartz.Impl.RavenDB
                     return;
                 }
 
-                trigger.State = GetBlockedJobs().Contains(trigger.JobKey) ? InternalTriggerState.Blocked : InternalTriggerState.Waiting;
+                trigger.State = (await GetBlockedJobs()).Contains(trigger.JobKey) ? InternalTriggerState.Blocked : InternalTriggerState.Waiting;
 
-                ApplyMisfire(trigger);
+                await ApplyMisfire(trigger);
 
-                session.SaveChanges();
+                await session.SaveChangesAsync();
             }
         }
 
         /// <summary>
-        /// Resume (un-pause) all of the <see cref="ITrigger" />s
+        /// Resume all of the <see cref="ITrigger" />s
         /// in the given group.
         /// <para>
         /// If any <see cref="ITrigger" /> missed one or more fire-times, then the
         /// <see cref="ITrigger" />'s misfire instruction will be applied.
         /// </para>
         /// </summary>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public IList<string> ResumeTriggers(GroupMatcher<TriggerKey> matcher)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task<IReadOnlyList<string>> ResumeTriggers(GroupMatcher<TriggerKey> matcher)
         {
-            Collection.ISet<string> resumedGroups = new Collection.HashSet<string>();
-            Collection.ISet<TriggerKey> keys = GetTriggerKeys(matcher);
+            ISet<string> resumedGroups = new HashSet<string>();
+            ISet<TriggerKey> keys = await GetTriggerKeys(matcher);
 
             foreach (TriggerKey triggerKey in keys)
             {
-                ResumeTrigger(triggerKey);
+                await ResumeTrigger(triggerKey);
                 resumedGroups.Add(triggerKey.Group);
             }
 
@@ -1195,12 +1180,13 @@ namespace Quartz.Impl.RavenDB
         /// Gets the paused trigger groups.
         /// </summary>
         /// <returns></returns>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public Collection.ISet<string> GetPausedTriggerGroups()
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task<ISet<string>> GetPausedTriggerGroups()
         {
-            using (var session = DocumentStoreHolder.Store.OpenSession())
+            using (var session = _store.OpenAsyncSession())
             {
-                return new Collection.HashSet<string>(
+                await Task.FromResult(0);
+                return new HashSet<string>(
                     session.Query<Trigger>()
                         .Where(t => t.State == InternalTriggerState.Paused || t.State == InternalTriggerState.PausedAndBlocked)
                         .Distinct()
@@ -1214,12 +1200,12 @@ namespace Quartz.Impl.RavenDB
         /// Gets the paused job groups.
         /// </summary>
         /// <returns></returns>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public Collection.ISet<string> GetPausedJobGroups()
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task<ISet<string>> GetPausedJobGroups()
         {
-            using (var session = DocumentStoreHolder.Store.OpenSession())
+            using (var session = _store.OpenAsyncSession())
             {
-                return session.Load<Scheduler>(InstanceName).PausedJobGroups;
+                return (await session.LoadAsync<Scheduler>(InstanceName)).PausedJobGroups;
             }
         }
 
@@ -1227,17 +1213,17 @@ namespace Quartz.Impl.RavenDB
         /// Gets the blocked jobs set.
         /// </summary>
         /// <returns></returns>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public Collection.ISet<string> GetBlockedJobs()
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task<ISet<string>> GetBlockedJobs()
         {
-            using (var session = DocumentStoreHolder.Store.OpenSession())
+            using (var session = _store.OpenAsyncSession())
             {
-                return session.Load<Scheduler>(InstanceName).BlockedJobs;
+                return (await session.LoadAsync<Scheduler>(InstanceName)).BlockedJobs;
             }
         }
 
         /// <summary> 
-        /// Resume (un-pause) the <see cref="IJob" /> with the
+        /// Resume the <see cref="IJob" /> with the
         /// given key.
         /// <para>
         /// If any of the <see cref="IJob" />'s<see cref="ITrigger" /> s missed one
@@ -1245,18 +1231,18 @@ namespace Quartz.Impl.RavenDB
         /// instruction will be applied.
         /// </para>
         /// </summary>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public void ResumeJob(JobKey jobKey)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task ResumeJob(JobKey jobKey)
         {
-            IList<IOperableTrigger> triggersForJob = GetTriggersForJob(jobKey);
-            foreach (IOperableTrigger trigger in triggersForJob)
+            var triggersForJob = await GetTriggersForJob(jobKey);
+            foreach (var trigger in triggersForJob)
             {
-                ResumeTrigger(trigger.Key);
+                await ResumeTrigger(trigger.Key);
             }
         }
 
         /// <summary>
-        /// Resume (un-pause) all of the <see cref="IJob" />s in
+        /// Resume all of the <see cref="IJob" />s in
         /// the given group.
         /// <para>
         /// If any of the <see cref="IJob" /> s had <see cref="ITrigger" /> s that
@@ -1264,16 +1250,16 @@ namespace Quartz.Impl.RavenDB
         /// misfire instruction will be applied.
         /// </para> 
         /// </summary>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public Collection.ISet<string> ResumeJobs(GroupMatcher<JobKey> matcher)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task<ISet<string>> ResumeJobs(GroupMatcher<JobKey> matcher)
         {
-            Collection.ISet<string> resumedGroups = new Collection.HashSet<string>();
+            ISet<string> resumedGroups = new HashSet<string>();
 
-            Collection.ISet<JobKey> keys = GetJobKeys(matcher);
+            ISet<JobKey> keys = await GetJobKeys(matcher);
 
-            using (var session = DocumentStoreHolder.Store.OpenSession())
+            using (var session = _store.OpenAsyncSession())
             {
-                var sched = session.Load<Scheduler>(InstanceName);
+                var sched = await session.LoadAsync<Scheduler>(InstanceName);
 
                 foreach (var pausedJobGroup in sched.PausedJobGroups)
                 {
@@ -1287,15 +1273,15 @@ namespace Quartz.Impl.RavenDB
                 {
                     sched.PausedJobGroups.Remove(resumedGroup);
                 }
-                session.SaveChanges();
+                await session.SaveChangesAsync();
             }
 
             foreach (JobKey key in keys)
             {
-                IList<IOperableTrigger> triggers = GetTriggersForJob(key);
-                foreach (IOperableTrigger trigger in triggers)
+                var triggers = await GetTriggersForJob(key);
+                foreach (var trigger in triggers)
                 {
-                    ResumeTrigger(trigger.Key);
+                    await ResumeTrigger(trigger.Key);
                 }
             }
 
@@ -1306,24 +1292,24 @@ namespace Quartz.Impl.RavenDB
         /// Pause all triggers - equivalent of calling <see cref="PauseTriggers" />
         /// on every group.
         /// <para>
-        /// When <see cref="ResumeAll" /> is called (to un-pause), trigger misfire
+        /// When <see cref="ResumeAll" /> is called (to resume), trigger misfire
         /// instructions WILL be applied.
         /// </para>
         /// </summary>
         /// <seealso cref="ResumeAll" />
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public void PauseAll()
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task PauseAll()
         {
-            IList<string> triggerGroupNames = GetTriggerGroupNames();
+            var triggerGroupNames = await GetTriggerGroupNames();
 
             foreach (var groupName in triggerGroupNames)
             {
-                PauseTriggers(GroupMatcher<TriggerKey>.GroupEquals(groupName));
+                await PauseTriggers(GroupMatcher<TriggerKey>.GroupEquals(groupName));
             }
         }
 
         /// <summary>
-        /// Resume (un-pause) all triggers - equivalent of calling <see cref="ResumeTriggers" />
+        /// Resume all triggers - equivalent of calling <see cref="ResumeTriggers" />
         /// on every group.
         /// <para>
         /// If any <see cref="ITrigger" /> missed one or more fire-times, then the
@@ -1332,27 +1318,27 @@ namespace Quartz.Impl.RavenDB
         /// 
         /// </summary>
         /// <seealso cref="PauseAll" />
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public void ResumeAll()
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task ResumeAll()
         {
-            using (var session = DocumentStoreHolder.Store.OpenSession())
+            using (var session = _store.OpenAsyncSession())
             {
-                var sched = session.Load<Scheduler>(InstanceName);
+                var sched = await session.LoadAsync<Scheduler>(InstanceName);
 
                 sched.PausedJobGroups.Clear();
 
-                var triggerGroupNames = GetTriggerGroupNames();
+                var triggerGroupNames = await GetTriggerGroupNames();
 
                 foreach (var groupName in triggerGroupNames)
                 {
-                    ResumeTriggers(GroupMatcher<TriggerKey>.GroupEquals(groupName));
+                    await ResumeTriggers(GroupMatcher<TriggerKey>.GroupEquals(groupName));
                 }
             }
         }
 
         protected virtual DateTimeOffset MisfireTime
         {
-            [MethodImpl(MethodImplOptions.Synchronized)]
+            //[MethodImpl(MethodImplOptions.Synchronized)]
             get
             {
                 DateTimeOffset misfireTime = SystemTime.UtcNow();
@@ -1370,8 +1356,8 @@ namespace Quartz.Impl.RavenDB
         /// </summary>
         /// <param name="trigger">The trigger wrapper.</param>
         /// <returns></returns>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        protected virtual bool ApplyMisfire(Trigger trigger)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        protected virtual async Task<bool> ApplyMisfire(Trigger trigger)
         {
             DateTimeOffset misfireTime = SystemTime.UtcNow();
             if (MisfireThreshold > TimeSpan.Zero)
@@ -1389,18 +1375,18 @@ namespace Quartz.Impl.RavenDB
             ICalendar cal = null;
             if (trigger.CalendarName != null)
             {
-                cal = RetrieveCalendar(trigger.CalendarName);
+                cal = await RetrieveCalendar(trigger.CalendarName);
             }
 
             // Deserialize to an IOperableTrigger to apply original methods on the trigger
             var trig = trigger.Deserialize();
-            signaler.NotifyTriggerListenersMisfired(trig);
+            await signaler.NotifyTriggerListenersMisfired(trig);
             trig.UpdateAfterMisfire(cal);
             trigger.UpdateFireTimes(trig);
 
             if (!trig.GetNextFireTimeUtc().HasValue)
             {
-                signaler.NotifySchedulerListenersFinalized(trig);
+                await signaler.NotifySchedulerListenersFinalized(trig);
                 trigger.State = InternalTriggerState.Complete;
 
             }
@@ -1424,20 +1410,20 @@ namespace Quartz.Impl.RavenDB
         /// <returns></returns>
         /// <seealso cref="ITrigger">
         /// </seealso>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public virtual IList<IOperableTrigger> AcquireNextTriggers(DateTimeOffset noLaterThan, int maxCount, TimeSpan timeWindow)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async virtual Task<IReadOnlyList<IOperableTrigger>> AcquireNextTriggers(DateTimeOffset noLaterThan, int maxCount, TimeSpan timeWindow)
         {
             List<IOperableTrigger> result = new List<IOperableTrigger>();
-            Collection.ISet<JobKey> acquiredJobKeysForNoConcurrentExec = new Collection.HashSet<JobKey>();
+            ISet<JobKey> acquiredJobKeysForNoConcurrentExec = new HashSet<JobKey>();
             DateTimeOffset? firstAcquiredTriggerFireTime = null;
 
-            using (var session = DocumentStoreHolder.Store.OpenSession())
+            using (var session = _store.OpenAsyncSession())
             {
-                var triggersQuery = session.Query<Trigger>()
+                var triggersQuery = await session.Query<Trigger>()
                     .Where(t => (t.State == InternalTriggerState.Waiting) && (t.NextFireTimeUtc <= (noLaterThan + timeWindow).UtcDateTime))
                     .OrderBy(t => t.NextFireTimeTicks)
                     .ThenByDescending(t => t.Priority)
-                    .ToList();
+                    .ToListAsync();
 
                 var triggers = new SortedSet<Trigger>(triggersQuery, new TriggerComparator());
 
@@ -1463,7 +1449,7 @@ namespace Quartz.Impl.RavenDB
                         continue;
                     }
 
-                    if (ApplyMisfire(candidateTrigger))
+                    if (await ApplyMisfire(candidateTrigger))
                     {
                         if (candidateTrigger.NextFireTimeUtc != null)
                         {
@@ -1480,7 +1466,7 @@ namespace Quartz.Impl.RavenDB
                     // If trigger's job is set as @DisallowConcurrentExecution, and it has already been added to result, then
                     // put it back into the timeTriggers set and continue to search for next trigger.
                     JobKey jobKey = new JobKey(candidateTrigger.JobName, candidateTrigger.Group);
-                    Job job = session.Load<Job>(candidateTrigger.JobKey);
+                    Job job = await session.LoadAsync<Job>(candidateTrigger.JobKey);
 
                     if (job.ConcurrentExecutionDisallowed)
                     {
@@ -1506,7 +1492,7 @@ namespace Quartz.Impl.RavenDB
                         break;
                     }
                 }
-                session.SaveChanges();
+                await session.SaveChangesAsync();
             }
             return result;
         }
@@ -1516,18 +1502,18 @@ namespace Quartz.Impl.RavenDB
         /// fire the given <see cref="ITrigger" />, that it had previously acquired
         /// (reserved).
         /// </summary>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public void ReleaseAcquiredTrigger(IOperableTrigger trig)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task ReleaseAcquiredTrigger(IOperableTrigger trig)
         {
-            using (var session = DocumentStoreHolder.Store.OpenSession())
+            using (var session = _store.OpenAsyncSession())
             {
-                var trigger = session.Load<Trigger>(trig.Key.Name + "/" + trig.Key.Group);
+                var trigger = await session.LoadAsync<Trigger>(trig.Key.Name + "/" + trig.Key.Group);
                 if ((trigger == null) || (trigger.State != InternalTriggerState.Acquired))
                 {
                     return;
                 }
                 trigger.State = InternalTriggerState.Waiting;
-                session.SaveChanges();
+                await session.SaveChangesAsync();
             }
         }
 
@@ -1542,16 +1528,16 @@ namespace Quartz.Impl.RavenDB
         /// state.  Preference is to return an empty list if none of the triggers
         /// could be fired.
         /// </returns>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public IList<TriggerFiredResult> TriggersFired(IList<IOperableTrigger> triggers)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task<IReadOnlyList<TriggerFiredResult>> TriggersFired(IList<IOperableTrigger> triggers)
         {
             List<TriggerFiredResult> results = new List<TriggerFiredResult>();
-            using (var session = DocumentStoreHolder.Store.OpenSession())
+            using (var session = _store.OpenAsyncSession())
             {
                 foreach (IOperableTrigger tr in triggers)
                 {
                     // was the trigger deleted since being acquired?
-                    var trigger = session.Load<Trigger>(tr.Key.Name + "/" + tr.Key.Group);
+                    var trigger = await session.LoadAsync<Trigger>(tr.Key.Name + "/" + tr.Key.Group);
 
                     // was the trigger completed, paused, blocked, etc. since being acquired?
                     if (trigger?.State != InternalTriggerState.Acquired)
@@ -1562,7 +1548,7 @@ namespace Quartz.Impl.RavenDB
                     ICalendar cal = null;
                     if (trigger.CalendarName != null)
                     {
-                        cal = RetrieveCalendar(trigger.CalendarName);
+                        cal = await RetrieveCalendar(trigger.CalendarName);
                         if (cal == null)
                         {
                             continue;
@@ -1573,7 +1559,7 @@ namespace Quartz.Impl.RavenDB
                     var trig = trigger.Deserialize();
                     trig.Triggered(cal);
 
-                    TriggerFiredBundle bndle = new TriggerFiredBundle(RetrieveJob(trig.JobKey),
+                    TriggerFiredBundle bndle = new TriggerFiredBundle(await RetrieveJob(trig.JobKey),
                         trig,
                         cal,
                         false, SystemTime.UtcNow(),
@@ -1601,13 +1587,13 @@ namespace Quartz.Impl.RavenDB
                                 t.State = InternalTriggerState.PausedAndBlocked;
                             }
                         }
-                        var sched = session.Load<Scheduler>(InstanceName);
+                        var sched = await session.LoadAsync<Scheduler>(InstanceName);
                         sched.BlockedJobs.Add(job.Key.Name + "/" + job.Key.Group);
                     }
 
                     results.Add(new TriggerFiredResult(bndle));
                 }
-                session.SaveChanges();
+                await session.SaveChangesAsync();
             }
             return results;
 
@@ -1620,16 +1606,16 @@ namespace Quartz.Impl.RavenDB
         /// in the given <see cref="IJobDetail" /> should be updated if the <see cref="IJob" />
         /// is stateful.
         /// </summary>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        public void TriggeredJobComplete(IOperableTrigger trig, IJobDetail jobDetail, SchedulerInstruction triggerInstCode)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        public async Task TriggeredJobComplete(IOperableTrigger trig, IJobDetail jobDetail, SchedulerInstruction triggerInstCode)
         {
-            using (var session = DocumentStoreHolder.Store.OpenSession())
+            using (var session = _store.OpenAsyncSession())
             {
-                var trigger = session.Load<Trigger>(trig.Key.Name + "/" + trig.Key.Group);
-                var sched = session.Load<Scheduler>(InstanceName);
+                var trigger = await session.LoadAsync<Trigger>(trig.Key.Name + "/" + trig.Key.Group);
+                var sched = await session.LoadAsync<Scheduler>(InstanceName);
 
                 // It's possible that the job or trigger is null if it was deleted during execution
-                var job = session.Load<Job>(trig.JobKey.Name + "/" + trig.JobKey.Group);
+                var job = await session.LoadAsync<Job>(trig.JobKey.Name + "/" + trig.JobKey.Group);
 
                 if (job != null)
                 {
@@ -1642,13 +1628,13 @@ namespace Quartz.Impl.RavenDB
                     {
                         sched.BlockedJobs.Remove(job.Key);
 
-                        List<Trigger> trigs = session.Query<Trigger>()
+                        var trigs = await session.Query<Trigger>()
                             .Where(t => Equals(t.Group, job.Group) && Equals(t.JobName, job.Name))
-                            .ToList();
+                            .ToListAsync();
 
                         foreach (Trigger t in trigs)
                         {
-                            var triggerToUpdate = session.Load<Trigger>(t.Key);
+                            var triggerToUpdate = await session.LoadAsync<Trigger>(t.Key);
                             if (t.State == InternalTriggerState.Blocked)
                             {
                                 triggerToUpdate.State = InternalTriggerState.Waiting;
@@ -1682,16 +1668,16 @@ namespace Quartz.Impl.RavenDB
                             d = trigger.NextFireTimeUtc;
                             if (!d.HasValue)
                             {
-                                RemoveTrigger(trig.Key);
+                                await RemoveTrigger(trig.Key);
                             }
                             else
                             {
-                                //Deleting cancelled - trigger still active
+                                //Deleting canceled - trigger still active
                             }
                         }
                         else
                         {
-                            RemoveTrigger(trig.Key);
+                            await RemoveTrigger(trig.Key);
                             signaler.SignalSchedulingChange(null);
                         }
                     }
@@ -1707,16 +1693,16 @@ namespace Quartz.Impl.RavenDB
                     }
                     else if (triggerInstCode == SchedulerInstruction.SetAllJobTriggersError)
                     {
-                        SetAllTriggersOfJobToState(trig.JobKey, InternalTriggerState.Error);
+                        await SetAllTriggersOfJobToState(trig.JobKey, InternalTriggerState.Error);
                         signaler.SignalSchedulingChange(null);
                     }
                     else if (triggerInstCode == SchedulerInstruction.SetAllJobTriggersComplete)
                     {
-                        SetAllTriggersOfJobToState(trig.JobKey, InternalTriggerState.Complete);
+                        await SetAllTriggersOfJobToState(trig.JobKey, InternalTriggerState.Complete);
                         signaler.SignalSchedulingChange(null);
                     }
                 }
-                session.SaveChanges();
+                await session.SaveChangesAsync();
             }
         }
 
@@ -1724,20 +1710,20 @@ namespace Quartz.Impl.RavenDB
         /// <summary>
         /// Sets the State of all triggers of job to specified State.
         /// </summary>
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        protected virtual void SetAllTriggersOfJobToState(JobKey jobKey, InternalTriggerState state)
+        //[MethodImpl(MethodImplOptions.Synchronized)]
+        protected virtual async Task SetAllTriggersOfJobToState(JobKey jobKey, InternalTriggerState state)
         {
-            using (var session = DocumentStoreHolder.Store.OpenSession())
+            using (var session = _store.OpenAsyncSession())
             {
                 var trigs = session.Query<Trigger>()
                     .Where(t => Equals(t.Group, jobKey.Group) && Equals(t.JobName, jobKey.Name));
 
                 foreach (var trig in trigs)
                 {
-                    var triggerToUpdate = session.Load<Trigger>(trig.Key);
+                    var triggerToUpdate = await session.LoadAsync<Trigger>(trig.Key);
                     triggerToUpdate.State = state;
                 }
-                session.SaveChanges();
+                await session.SaveChangesAsync();
             }
         }
 
@@ -1749,9 +1735,9 @@ namespace Quartz.Impl.RavenDB
         [TimeSpanParseRule(TimeSpanParseRule.Milliseconds)]
         public virtual TimeSpan MisfireThreshold
         {
-            [MethodImpl(MethodImplOptions.Synchronized)]
+            //[MethodImpl(MethodImplOptions.Synchronized)]
             get { return misfireThreshold; }
-            [MethodImpl(MethodImplOptions.Synchronized)]
+            //[MethodImpl(MethodImplOptions.Synchronized)]
             set
             {
                 if (value.TotalMilliseconds < 1)
